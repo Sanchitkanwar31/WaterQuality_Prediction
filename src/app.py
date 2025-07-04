@@ -34,7 +34,7 @@ if st.button('Predict'):
         predicted_pollutants = model.predict(input_encoded)[0]
         pollutants = ['O2', 'NO3', 'NO2', 'SO4', 'PO4', 'CL']
         safe_thresholds = {
-    'O2': 4,         # > 4 mg/L is safe (indicator only)
+    'O2': 4,         
     'NO3': 50,
     'NO2': 3,
     'SO4': 250,
