@@ -22,6 +22,7 @@ AI-driven solution to monitor and predict water quality parameters like O₂, NO
 | 0.33  | 2.77 | 12        | 12.3  | 9.5   | 0.05 | 154 | 0.45 | 289  |
 | 0.044 | 3.00 | 51.6      | 14.61 | 17.75 | 0.03 | 352 | 0.09 | 1792 |
 
+ Data is stored in water_dataset.csv file format
 ---
 
 ##  How It Works
