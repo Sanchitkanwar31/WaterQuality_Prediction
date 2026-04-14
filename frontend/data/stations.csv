@@ -1,0 +1,16 @@
+id,name,city,state,lat,lon,river
+1,Delhi Central,New Delhi,Delhi,28.6139,77.2090,Yamuna
+2,Noida Sector 62,Noida,Uttar Pradesh,28.6270,77.3649,Hindon
+3,Ghaziabad Point,Ghaziabad,Uttar Pradesh,28.6692,77.4538,Hindon
+4,Gurgaon Lake,Gurgaon,Haryana,28.4595,77.0266,None
+5,Faridabad Canal,Faridabad,Haryana,28.4089,77.3178,Yamuna Canal
+6,Kanpur Ganga Point,Kanpur,Uttar Pradesh,26.4499,80.3319,Ganga
+7,Varanasi Ghat,Varanasi,Uttar Pradesh,25.3176,82.9739,Ganga
+8,Patna River Bank,Patna,Bihar,25.5941,85.1376,Ganga
+9,Kolkata Hooghly,Kolkata,West Bengal,22.5726,88.3639,Hooghly
+10,Mumbai Coast,Mumbai,Maharashtra,19.0760,72.8777,Arabian Sea
+11,Chennai Marina,Chennai,Tamil Nadu,13.0827,80.2707,Bay of Bengal
+12,Bangalore Lake,Bangalore,Karnataka,12.9716,77.5946,None
+13,Hyderabad Tank,Hyderabad,Telangana,17.3850,78.4867,None
+14,Jaipur Water Site,Jaipur,Rajasthan,26.9124,75.7873,None
+15,Pune River,Pune,Maharashtra,18.5204,73.8567,Mula-Mutha
