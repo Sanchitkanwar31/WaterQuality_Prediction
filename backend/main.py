@@ -3,9 +3,17 @@ from pydantic import BaseModel
 import joblib
 import numpy as np
 from utils.wqi import calculate_wqi
+from fastapi.middleware.cors import CORSMiddleware
+
 
 app = FastAPI(title="Water Quality API")
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 import os
 import pickle
 
