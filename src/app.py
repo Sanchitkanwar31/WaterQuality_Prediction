@@ -1,72 +1,3 @@
-# import pandas as pd
-# import numpy as np
-# import joblib
-# import pickle
-# import streamlit as st
-# import sklearn
-
-# model=joblib.load("pollution_model.pkl")
-# model_cols = joblib.load("model_columns.pkl")
-
-# st.title('Water Impurity Prediction')
-# st.write("Please enter the following details to predict water impurity:")
-
-# year_input=st.number_input("Enter Year", min_value=2000, max_value=2100, value=2022)
-# station_id=st.text_input("Enter Station ID", value='1')
-
-
-# #encode then Predict
-# if st.button('Predict'):
-#     if not station_id:
-#         st.warning('Please enter the station ID')
-#     else:
-#         # get the input and it will encode id+year
-#         input_df = pd.DataFrame({'year': [year_input], 'id':[station_id]})
-#         input_encoded = pd.get_dummies(input_df, columns=['id'])
-
-#         # align with model cols
-#         for col in model_cols:
-#             if col not in input_encoded.columns:
-#                 input_encoded[col] = 0
-#         input_encoded = input_encoded[model_cols]
-
-#         # Predict
-#         predicted_pollutants = model.predict(input_encoded)[0]
-#         pollutants = ['O2', 'NO3', 'NO2', 'SO4', 'PO4', 'CL']
-#         safe_thresholds = {
-#     'O2': 4,         
-#     'NO3': 50,
-#     'NO2': 3,
-#     'SO4': 250,
-#     'PO4': 0.5,      # Using tolerable limit
-#     'CL': 250
-# }
-
-#         st.subheader(f"Predicted pollutant levels for the station '{station_id}' in {year_input}:")
-#         # predicted_values = {}
-#         # for p, val in zip(pollutants, predicted_pollutants):
-#         #     st.write(f'{p}: &nbsp;{val:.2f}')
-
-#         predicted_values = {}
-#         is_impure = False
-
-#         for p, val in zip(pollutants, predicted_pollutants):
-#             predicted_values[p] = val
-#             #compare with threshold
-#             if p == 'O2':
-#                 if val < safe_thresholds[p]:
-#                     is_impure = True
-#             else:
-#                 if val > safe_thresholds[p]:
-#                     is_impure = True
-#             st.write(f"**{p}**: {val:.2f} mg/L")
-
-#         # final water quality verdict
-#         st.markdown("---")
-#         if is_impure:
-#             st.error(" **Water is Impure to Drink** 🚱")
-#         else:
-#             st.success("  **Water is Pure to Drink** 💧")
 
 
 import os
@@ -74,12 +5,10 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import joblib
+import plotly.express as px
 
 st.set_page_config(page_title="Water Impurity Prediction", page_icon="💧")
 
-# ---------------------------
-# Load model & metadata
-# ---------------------------
 @st.cache_resource(show_spinner=False)
 def load_artifacts():
     try:
@@ -111,13 +40,19 @@ def load_artifacts():
 
 model, model_cols, target_names = load_artifacts()
 
+# Load dataset 
+try:
+    df_full = pd.read_csv("water_quality.csv")
+    df_full["id"] = df_full["id"].astype(str)
+    all_stations = sorted(df_full["id"].unique())
+except Exception:
+    all_stations = ["1"]  # fallback if dataset not available
+
 # EXACT training target order (9 outputs)
 DEFAULT_TARGETS = ['NH4','BSK5','Suspended','O2','NO3','NO2','SO4','PO4','CL']
 pollutants = target_names if (target_names and len(target_names) > 0) else DEFAULT_TARGETS
 
-# ---------------------------
 # Sidebar: Thresholds
-# ---------------------------
 st.sidebar.header("Thresholds (mg/L)")
 st.sidebar.caption("Only enforced values affect the final verdict.")
 
@@ -154,9 +89,7 @@ SAFE_THRESHOLDS = {
 # For display: min for O2 else max
 def threshold_type(p): return "min" if p == "O2" else "max"
 
-# ---------------------------
 # UI (main)
-# ---------------------------
 st.title("💧 Water Impurity Prediction (9-parameter)")
 st.write("Predict nine water quality indicators and determine drinkability based on enforced thresholds.")
 
@@ -256,3 +189,81 @@ if submitted:
         "Note: O2 uses a minimum threshold; all others use maximum thresholds. "
         "Enable thresholds in the sidebar to include NH4/BSK5/Suspended in the verdict."
     )
+    
+  
+    
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    selected_station = st.text_input("Station ID (exact as in training)", value="1")
+
+with col2:
+    start_year = st.number_input("Start Year", min_value=2000, max_value=2100, value=2010)
+
+with col3:
+    end_year = st.number_input("End Year", min_value=2000, max_value=2100, value=2025)
+
+generate_trend = st.button("Generate Trend")
+if generate_trend:
+
+    if start_year > end_year:
+        st.error("Start year must be less than or equal to End year.")
+        st.stop()
+
+    years = list(range(int(start_year), int(end_year) + 1))
+    trend_predictions = []
+
+    for y in years:
+
+        # Build input
+        input_df = pd.DataFrame({
+            'year': [int(y)],
+            'id': [str(selected_station)]
+        })
+
+        # One-hot encode
+        input_encoded = pd.get_dummies(input_df, columns=['id'])
+
+        # Align columns with training
+        missing_cols = set(model_cols) - set(input_encoded.columns)
+        for col in missing_cols:
+            input_encoded[col] = 0
+
+        input_encoded = input_encoded.reindex(columns=model_cols, fill_value=0)
+
+        # Predict
+        y_pred = model.predict(input_encoded)
+        y_pred = np.array(y_pred).reshape(-1).astype(float)
+
+        trend_predictions.append(y_pred)
+
+    # Convert to DataFrame
+    trend_array = np.array(trend_predictions)
+
+    trend_df = pd.DataFrame(
+        trend_array,
+        columns=pollutants
+    )
+
+    trend_df["Year"] = years
+    trend_df = trend_df.set_index("Year")
+
+    # Show All Pollutants Trend
+    st.subheader(f"Trend for Station {selected_station} ({start_year}–{end_year})")
+    st.line_chart(trend_df)
+
+    # Individual Pollutant View
+    st.subheader("View Specific Pollutant")
+
+    selected_pollutant = st.selectbox(
+        "Select Pollutant",
+        pollutants
+    )
+
+    st.line_chart(trend_df[[selected_pollutant]])
+
+    # Show Table
+    st.dataframe(trend_df, use_container_width=True)
+
+    st.success("Trend generated successfully.")
