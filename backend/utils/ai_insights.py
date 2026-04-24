@@ -1,14 +1,15 @@
 # backend/utils/ai_insights.py
 
-def classify_severity(param, value):
-    """Return severity level based on threshold"""
-    thresholds = {
-        "NH4": 0.5, "BSK5": 3, "Suspended": 25,
-        "O2": 4, "NO3": 50, "NO2": 3,
-        "SO4": 250, "PO4": 0.5, "CL": 250
-    }
+WHO_LIMITS = {
+    "NH4": 0.5, "BSK5": 3, "Suspended": 25,
+    "O2": 4, "NO3": 50, "NO2": 3,
+    "SO4": 250, "PO4": 0.5, "CL": 250
+}
 
-    limit = thresholds[param]
+
+# ================= SEVERITY =================
+def classify_severity(param, value):
+    limit = WHO_LIMITS[param]
 
     if param == "O2":
         if value >= limit:
@@ -17,7 +18,6 @@ def classify_severity(param, value):
             return "moderate"
         else:
             return "danger"
-
     else:
         if value <= limit:
             return "safe"
@@ -27,67 +27,80 @@ def classify_severity(param, value):
             return "danger"
 
 
-def summarize_water(pred):
-    """Overall summary"""
-    danger_count = 0
-    moderate_count = 0
+# ================= PRIORITY ISSUES =================
+def get_top_issues(pred):
+    issues = []
 
     for k, v in pred.items():
         sev = classify_severity(k, v)
-        if sev == "danger":
-            danger_count += 1
-        elif sev == "moderate":
-            moderate_count += 1
 
-    if danger_count >= 2:
-        return "🚨 Water is unsafe and may pose serious health risks."
-    elif moderate_count >= 3:
-        return "⚠ Water quality is moderate and needs treatment before drinking."
-    else:
-        return "✅ Water is generally safe within acceptable limits."
+        if sev != "safe":
+            issues.append((k, v, sev))
+
+    # sort by severity (danger first)
+    issues.sort(key=lambda x: 0 if x[2] == "danger" else 1)
+
+    return issues[:3]  # top 3
 
 
+# ================= SUMMARY =================
+def summarize_water(pred):
+    issues = get_top_issues(pred)
+
+    if not issues:
+        return "✅ Water quality is within safe WHO limits."
+
+    if any(sev == "danger" for _, _, sev in issues):
+        return "🚨 Water is unsafe due to critical parameter violations."
+
+    return "⚠ Water quality is moderate and requires treatment."
+
+
+# ================= HEALTH =================
 def health_analysis(pred):
+    issues = get_top_issues(pred)
+
     messages = []
 
-    if pred["NO3"] > 50:
-        messages.append("High nitrate levels can cause methemoglobinemia (blue baby syndrome).")
-
-    if pred["BSK5"] > 3:
-        messages.append("Elevated BOD indicates organic pollution and possible microbial contamination.")
-
-    if pred["NO2"] > 3:
-        messages.append("Nitrite toxicity can affect oxygen transport in blood.")
-
-    if pred["Suspended"] > 25:
-        messages.append("High suspended solids may carry pathogens and reduce water clarity.")
-
-    if pred["CL"] > 250:
-        messages.append("Excess chloride may lead to hypertension and taste issues.")
+    for k, v, sev in issues:
+        if k == "NO3":
+            messages.append("High nitrate may cause oxygen deficiency in infants.")
+        elif k == "BSK5":
+            messages.append("High BOD indicates organic pollution and bacterial growth.")
+        elif k == "NO2":
+            messages.append("Nitrite toxicity affects blood oxygen transport.")
+        elif k == "Suspended":
+            messages.append("Suspended particles may carry harmful microbes.")
+        elif k == "CL":
+            messages.append("Excess chloride may impact taste and blood pressure.")
+        elif k == "O2":
+            messages.append("Low oxygen harms aquatic life and indicates poor quality.")
 
     if not messages:
-        messages.append("No significant health risks detected.")
+        return ["No major health risks detected."]
 
     return messages
 
 
+# ================= TREATMENT =================
 def treatment_advice(pred):
+    issues = get_top_issues(pred)
+
     advice = []
 
-    if pred["NO3"] > 50:
-        advice.append("Use Reverse Osmosis (RO) to remove nitrates.")
-
-    if pred["BSK5"] > 3:
-        advice.append("Apply biological treatment or aeration to reduce organic load.")
-
-    if pred["Suspended"] > 25:
-        advice.append("Use filtration (sand/activated carbon) to remove suspended particles.")
-
-    if pred["NO2"] > 3:
-        advice.append("Ion exchange or biological filtration recommended.")
-
-    if pred["CL"] > 250:
-        advice.append("Use demineralization or RO systems.")
+    for k, v, sev in issues:
+        if k == "NO3":
+            advice.append("Apply Reverse Osmosis (RO) to remove nitrates.")
+        elif k == "BSK5":
+            advice.append("Use biological treatment or aeration.")
+        elif k == "Suspended":
+            advice.append("Use filtration or sedimentation.")
+        elif k == "NO2":
+            advice.append("Use ion exchange or bio-filtration.")
+        elif k == "CL":
+            advice.append("Use RO or demineralization.")
+        elif k == "O2":
+            advice.append("Increase aeration to improve oxygen levels.")
 
     if not advice:
         advice.append("Basic filtration and boiling are sufficient.")
@@ -95,40 +108,67 @@ def treatment_advice(pred):
     return advice
 
 
+# ================= EXPLANATION =================
 def explanation(pred):
-    explanation_text = "This prediction is based on analysis of key water quality indicators:\n\n"
+    text = "📊 Water Quality Breakdown:\n\n"
 
     for k, v in pred.items():
-        explanation_text += f"- {k}: {v:.2f}\n"
+        limit = WHO_LIMITS[k]
+        status = classify_severity(k, v)
 
-    explanation_text += "\nThe model evaluates chemical, biological, and physical parameters to determine safety."
+        if k == "O2":
+            text += f"- {k}: {v:.2f} (min required {limit}) → {status}\n"
+        else:
+            text += f"- {k}: {v:.2f} (max allowed {limit}) → {status}\n"
 
-    return explanation_text
+    text += "\nThis analysis is based on WHO drinking water standards."
+
+    return text
 
 
+# ================= TREND =================
 def trend_analysis(pred):
-    """Simple reasoning-based trend insight"""
-    if pred["NO3"] > 50 and pred["BSK5"] > 3:
-        return "Pollution trend suggests agricultural runoff and organic contamination increasing."
+    issues = get_top_issues(pred)
 
-    if pred["O2"] < 4:
-        return "Low dissolved oxygen indicates possible ecosystem stress."
+    if not issues:
+        return "Water quality is stable with no concerning trends."
 
-    return "Water parameters appear stable with no alarming trend indicators."
+    if any(k in ["NO3", "NO2"] for k, _, _ in issues):
+        return "Possible agricultural runoff increasing chemical contamination."
+
+    if any(k == "BSK5" for k, _, _ in issues):
+        return "Organic pollution trend suggests waste discharge nearby."
+
+    if any(k == "O2" for k, _, _ in issues):
+        return "Low oxygen levels indicate ecosystem stress."
+
+    return "Moderate fluctuations observed in water quality."
 
 
+# ================= MAIN AI =================
 def generate_ai_insight(pred, query_type="health"):
-    """Main AI router"""
 
     summary = summarize_water(pred)
+    issues = get_top_issues(pred)
+
+    issue_text = "\n".join([f"- {k}: {v:.2f} ({sev})" for k, v, sev in issues])
 
     if query_type == "health":
         risks = health_analysis(pred)
-        return summary + "\n\nHealth Risks:\n- " + "\n- ".join(risks)
+        return f"""{summary}
+
+🔍 Key Issues:
+{issue_text}
+
+🧠 Health Impact:
+- """ + "\n- ".join(risks)
 
     elif query_type == "treatment":
         steps = treatment_advice(pred)
-        return summary + "\n\nRecommended Treatment:\n- " + "\n- ".join(steps)
+        return f"""{summary}
+
+🔧 Recommended Actions:
+- """ + "\n- ".join(steps)
 
     elif query_type == "explanation":
         return explanation(pred)
@@ -137,4 +177,8 @@ def generate_ai_insight(pred, query_type="health"):
         return trend_analysis(pred)
 
     else:
-        return summary
+        return f"""{summary}
+
+🔍 Key Issues:
+{issue_text}
+"""
