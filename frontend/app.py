@@ -2,48 +2,61 @@ import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import folium
 from streamlit_folium import st_folium
 
-# =========================
-# CONFIG
-# =========================
+# ================= CONFIG =================
 st.set_page_config(page_title="Water Quality AI", layout="wide")
-
 API_URL = "https://water-quality-api-j65z.onrender.com"
 
-# =========================
-# LOAD DATA
-# =========================
+# ================= LOAD DATA =================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 stations_path = os.path.join(BASE_DIR, "data", "stations.csv")
 
 if not os.path.exists(stations_path):
-    st.error(f"stations.csv not found at {stations_path}")
+    st.error("stations.csv missing")
     st.stop()
 
 stations_df = pd.read_csv(stations_path)
 
-# =========================
-# UTILS
-# =========================
+# ================= WHO LIMITS =================
+WHO_LIMITS = {
+    "NH4": 0.5, "BSK5": 3, "Suspended": 25,
+    "O2": 4, "NO3": 50, "NO2": 3,
+    "SO4": 250, "PO4": 0.5, "CL": 250
+}
+
+# ================= UTILS =================
 def get_color(wqi):
-    if wqi < 50:
-        return "green"
-    elif wqi < 100:
-        return "orange"
-    else:
-        return "red"
+    return "green" if wqi < 50 else "orange" if wqi < 100 else "red"
 
 def get_nearest_station(lat, lon):
     df = stations_df.copy()
-    df["distance"] = ((df["lat"] - lat)**2 + (df["lon"] - lon)**2) ** 0.5
-    return df.loc[df["distance"].idxmin()]
+    df["dist"] = ((df["lat"] - lat)**2 + (df["lon"] - lon)**2) ** 0.5
+    return df.loc[df["dist"].idxmin()]
 
-# =========================
-# LOAD HEATMAP DATA
-# =========================
+def compute_quality(pred):
+    score = 0
+    compliance = {}
+
+    for k, v in pred.items():
+        limit = WHO_LIMITS[k]
+        ok = v >= limit if k == "O2" else v <= limit
+        compliance[k] = ok
+        score += int(ok)
+
+    return (score / len(pred)) * 100, compliance
+
+def generate_ai(pred):
+    if pred["NO3"] > 50:
+        return "⚠ High nitrate → harmful for infants."
+    if pred["BSK5"] > 3:
+        return "⚠ Organic pollution detected."
+    return "✅ Water is within acceptable limits."
+
+# ================= HEATMAP =================
 @st.cache_data
 def load_heatmap():
     data = []
@@ -67,21 +80,17 @@ def load_heatmap():
                     "wqi": wqi
                 })
         except:
-            continue
+            pass
 
     return pd.DataFrame(data)
 
 heatmap_df = load_heatmap()
 
-# =========================
-# TITLE
-# =========================
+# ================= TITLE =================
 st.title("💧 Water Quality Intelligence System")
 
-# =========================
-# CLICKABLE MAP
-# =========================
-st.markdown("## 🌍 Clickable Water Quality Map")
+# ================= MAP =================
+st.subheader("🌍 Interactive Water Map")
 
 m = folium.Map(location=[22.5, 78.9], zoom_start=5)
 
@@ -92,34 +101,30 @@ for _, row in heatmap_df.iterrows():
         color=get_color(row["wqi"]),
         fill=True,
         fill_color=get_color(row["wqi"]),
-        popup=f"{row['name']} | WQI: {row['wqi']:.2f}"
+        popup=f"{row['name']} | WQI: {row['wqi']:.1f}"
     ).add_to(m)
 
 map_data = st_folium(m, width=900, height=500)
 
-# =========================
-# SESSION STATE
-# =========================
-if "selected_station" not in st.session_state:
-    st.session_state.selected_station = str(stations_df.iloc[0]["id"])
+# ================= SESSION =================
+if "station" not in st.session_state:
+    st.session_state.station = str(stations_df.iloc[0]["id"])
 
-# Handle click
+# click handling
 if map_data and map_data.get("last_clicked"):
     lat = map_data["last_clicked"]["lat"]
     lon = map_data["last_clicked"]["lng"]
 
     nearest = get_nearest_station(lat, lon)
-    st.session_state.selected_station = str(nearest["id"])
+    st.session_state.station = str(nearest["id"])
 
-    st.success(f"📍 Selected: {nearest['name']} ({nearest['city']})")
+    st.success(f"Selected: {nearest['name']} ({nearest['city']})")
 
-selected_station = st.session_state.selected_station
+selected_station = st.session_state.station
 
-# =========================
-# DROPDOWN (SYNCED)
-# =========================
+# ================= SELECT =================
 selected_label = st.selectbox(
-    "Or select station manually",
+    "Select Station",
     stations_df.apply(lambda x: f"{x['name']} ({x['city']})", axis=1)
 )
 
@@ -127,77 +132,64 @@ selected_row = stations_df[
     stations_df.apply(lambda x: f"{x['name']} ({x['city']})", axis=1) == selected_label
 ].iloc[0]
 
-# Override if dropdown used
-if st.button("Use Selected Station"):
-    st.session_state.selected_station = str(selected_row["id"])
-    selected_station = st.session_state.selected_station
+if st.button("Use Station"):
+    st.session_state.station = str(selected_row["id"])
 
-# Show details
 row = stations_df[stations_df["id"] == int(selected_station)].iloc[0]
 
 st.markdown(f"""
-📍 **City:** {row['city']}, {row['state']}  
-🌊 **Water Body:** {row['river']}  
+📍 **{row['city']}, {row['state']}**  
+🌊 {row['river']}
 """)
 
-st.markdown("---")
+# ================= TABS =================
+tabs = st.tabs(["📊 Predict", "📈 Analysis", "🤖 AI Insight", "📚 WHO"])
 
-# =========================
-# MODE SWITCH
-# =========================
-mode = st.radio(
-    "Mode",
-    ["📊 Prediction", "🧪 Sensor Analysis"],
-    horizontal=True
-)
+# ================= PREDICT =================
+with tabs[0]:
 
-# =========================
-# PREDICTION MODE
-# =========================
-if "Prediction" in mode:
+    year = st.slider("Year", 2010, 2025, 2022)
 
-    year = st.number_input("Year", 2000, 2100, 2022)
-
-    if st.button("Predict"):
-
-        payload = {
-            "year": int(year),
+    if st.button("Run Prediction"):
+        res = requests.post(f"{API_URL}/predict", json={
+            "year": year,
             "station_id": selected_station
-        }
-
-        res = requests.post(f"{API_URL}/predict", json=payload)
+        })
 
         if res.status_code == 200:
             data = res.json()
+            pred = data["prediction"]
 
-            prediction = data["prediction"]
-            wqi = data["wqi_score"]
-            quality = data["quality"]
+            st.session_state["pred"] = pred
 
-            color = "green" if wqi < 50 else "orange" if wqi < 100 else "red"
-
-            st.markdown(f"### WQI: :{color}[{wqi:.2f}] ({quality})")
-
-            df = pd.DataFrame({
-                "Pollutant": list(prediction.keys()),
-                "Value": list(prediction.values())
-            })
-
+            # TABLE
+            df = pd.DataFrame(pred.items(), columns=["Pollutant", "Value"])
             st.dataframe(df)
 
-            fig = px.bar(df, x="Pollutant", y="Value")
-            st.plotly_chart(fig, use_container_width=True)
+            # BAR
+            st.plotly_chart(px.bar(df, x="Pollutant", y="Value"))
+
+            # SCORE
+            score, comp = compute_quality(pred)
+            st.metric("Quality Score", f"{score:.2f}/100")
+
+            comp_df = pd.DataFrame({
+                "Pollutant": comp.keys(),
+                "Safe": comp.values()
+            })
+            st.dataframe(comp_df)
 
         else:
-            st.error("API Error")
+            st.error("API error")
 
-    # =========================
-    # TREND
-    # =========================
-    if st.button("Show Trend 📈"):
+# ================= ANALYSIS =================
+with tabs[1]:
 
-        years = list(range(2015, 2025))
-        trend_data = []
+    st.subheader("Trend")
+
+    if st.button("Show Trend"):
+        years = range(2015, 2025)
+        trend = []
 
         for y in years:
             try:
@@ -206,73 +198,59 @@ if "Prediction" in mode:
                     json={"year": y, "station_id": selected_station},
                     timeout=3
                 )
-
                 if res.status_code == 200:
-                    trend_data.append({
-                        "Year": y,
-                        "WQI": res.json()["wqi_score"]
-                    })
+                    trend.append({"Year": y, "WQI": res.json()["wqi_score"]})
             except:
-                continue
+                pass
 
-        trend_df = pd.DataFrame(trend_data)
+        df = pd.DataFrame(trend)
+        st.plotly_chart(px.line(df, x="Year", y="WQI", markers=True))
 
-        if not trend_df.empty:
-            fig = px.line(trend_df, x="Year", y="WQI", markers=True)
-            st.plotly_chart(fig, use_container_width=True)
+# ================= AI =================
+with tabs[2]:
 
-# =========================
-# SENSOR MODE
-# =========================
-else:
+    if "pred" in st.session_state:
 
-    col1, col2, col3 = st.columns(3)
+        query = st.selectbox(
+    "Select Insight Type",
+    ["health", "treatment", "explanation", "trend"])
+    
 
-    with col1:
-        NH4 = st.number_input("NH4", value=0.3)
-        BSK5 = st.number_input("BSK5", value=2.5)
-        Suspended = st.number_input("Suspended", value=20.0)
+    if st.button("Generate AI Insight"):
 
-    with col2:
-        O2 = st.number_input("O2", value=5.0)
-        NO3 = st.number_input("NO3", value=30.0)
-        NO2 = st.number_input("NO2", value=1.0)
-
-    with col3:
-        SO4 = st.number_input("SO4", value=200.0)
-        PO4 = st.number_input("PO4", value=0.3)
-        CL = st.number_input("CL", value=150.0)
-
-    if st.button("Analyze"):
-
-        payload = {
-            "NH4": NH4,
-            "BSK5": BSK5,
-            "Suspended": Suspended,
-            "O2": O2,
-            "NO3": NO3,
-            "NO2": NO2,
-            "SO4": SO4,
-            "PO4": PO4,
-            "CL": CL
-        }
-
-        res = requests.post(f"{API_URL}/analyze", json=payload)
+        res = requests.post(
+            f"{API_URL}/ai-insight",
+            json={
+                "prediction": st.session_state["pred"],
+                "type": query
+            }
+        )
 
         if res.status_code == 200:
-            data = res.json()
+            st.success(res.json()["insight"])
 
-            wqi = data["wqi_score"]
-            quality = data["quality"]
+# ================= WHO =================
+with tabs[3]:
 
-            color = "green" if wqi < 50 else "orange" if wqi < 100 else "red"
+    if "pred" in st.session_state:
+        pred = st.session_state["pred"]
 
-            st.markdown(f"### WQI: :{color}[{wqi:.2f}] ({quality})")
+        fig = go.Figure()
 
-            df = pd.DataFrame({
-                "Parameter": list(payload.keys()),
-                "Value": list(payload.values())
-            })
+        fig.add_trace(go.Scatterpolar(
+            r=list(pred.values()),
+            theta=list(pred.keys()),
+            fill='toself',
+            name='Your Water'
+        ))
 
-            fig = px.bar(df, x="Parameter", y="Value")
-            st.plotly_chart(fig, use_container_width=True)
+        fig.add_trace(go.Scatterpolar(
+            r=list(WHO_LIMITS.values()),
+            theta=list(WHO_LIMITS.keys()),
+            fill='toself',
+            name='WHO Limits'
+        ))
+
+        st.plotly_chart(fig)
+    else:
+        st.info("Run prediction first")
