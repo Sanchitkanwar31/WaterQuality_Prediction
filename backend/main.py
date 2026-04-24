@@ -6,6 +6,7 @@ import numpy as np
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from utils.wqi import calculate_wqi
+from utils.ai_insights import generate_ai_insight
 
 app = FastAPI(title="Water Quality API")
 
@@ -118,3 +119,14 @@ def analyze(data: SensorInput):
 
     except Exception as e:
         return {"error": str(e)}
+@app.post("/ai-insight")
+def ai_insight(data: dict):
+
+    prediction = data.get("prediction")
+    query_type = data.get("type", "health")
+
+    insight = generate_ai_insight(prediction, query_type)
+
+    return {
+        "insight": insight
+    }
