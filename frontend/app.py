@@ -90,7 +90,6 @@ heatmap_df = load_heatmap()
 st.title("💧 Water Quality Intelligence System")
 
 # ================= MAP =================
-st.subheader("🌍 Interactive Water Map")
 
 m = folium.Map(location=[22.5, 78.9], zoom_start=5)
 
@@ -209,26 +208,74 @@ with tabs[1]:
 # ================= AI =================
 with tabs[2]:
 
-    if "pred" in st.session_state:
+    st.subheader("🤖 Water Quality AI Assistant")
 
-        query = st.selectbox(
-    "Select Insight Type",
-    ["health", "treatment", "explanation", "trend"])
-    
+    if "pred" not in st.session_state:
+        st.info("Run prediction first to enable AI insights.")
+        st.stop()
 
-    if st.button("Generate AI Insight"):
+    # Initialize chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
 
-        res = requests.post(
-            f"{API_URL}/ai-insight",
-            json={
-                "prediction": st.session_state["pred"],
-                "type": query
-            }
-        )
+    # Suggested prompts
+    st.markdown("### 💡 Quick Questions")
+    col1, col2, col3 = st.columns(3)
 
-        if res.status_code == 200:
-            st.success(res.json()["insight"])
+    if col1.button("Health Risk"):
+        st.session_state.user_input = "Explain health risks"
 
+    if col2.button("Treatment"):
+        st.session_state.user_input = "Suggest treatment methods"
+
+    if col3.button("Explain Data"):
+        st.session_state.user_input = "Explain this water quality in simple terms"
+
+    # User input
+    user_input = st.text_input(
+        "Ask anything about this water",
+        value=st.session_state.get("user_input", ""),
+        placeholder="e.g. Is this safe to drink? What should I do?"
+    )
+
+    if st.button("Send") and user_input:
+
+        # Add user message
+        st.session_state.chat_history.append(("user", user_input))
+
+        with st.spinner("AI is thinking... 🤖"):
+            try:
+                res = requests.post(
+                    f"{API_URL}/ai-insight",
+                    json={
+                        "prediction": st.session_state["pred"],
+                        "type": user_input
+                    }
+                )
+
+                if res.status_code == 200:
+                    ai_reply = res.json()["insight"]
+                else:
+                    ai_reply = "AI service error."
+
+            except Exception as e:
+                ai_reply = f"Error: {e}"
+
+        # Add AI response
+        st.session_state.chat_history.append(("ai", ai_reply))
+
+        # Clear input
+        st.session_state.user_input = ""
+
+    # ================= CHAT DISPLAY =================
+    st.markdown("---")
+    st.markdown("### 💬 Conversation")
+
+    for role, msg in st.session_state.chat_history:
+        if role == "user":
+            st.markdown(f"🧑 **You:** {msg}")
+        else:
+            st.markdown(f"🤖 **AI:** {msg}")
 # ================= WHO =================
 with tabs[3]:
 
