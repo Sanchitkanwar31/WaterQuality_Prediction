@@ -1,964 +1,817 @@
 import streamlit as st
-import numpy as np
+import requests
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
-from plotly.subplots import make_subplots
-import pickle, os, warnings
-warnings.filterwarnings("ignore")
+import plotly.graph_objects as go
+import os
+import folium
+from streamlit_folium import st_folium
 
-# ─── Page Config ────────────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="AquaGuard | Water Quality AI",
-    page_icon="💧",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+# ================= CONFIG =================
+st.set_page_config(page_title="Water Quality AI", layout="wide", page_icon="💧")
 
-# ─── Global CSS / Styles ─────────────────────────────────────────────────────
+API_URL = "https://water-quality-api-j65z.onrender.com"
+
+# ================= GLOBAL CSS =================
 st.markdown("""
 <style>
 /* ── Fonts ── */
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ── Reset & Base ── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body, [data-testid="stAppViewContainer"] {
-    background: #020b18 !important;
-    color: #d4eaf7;
-    font-family: 'DM Sans', sans-serif;
+/* ── Root variables ── */
+:root {
+    --bg:        #04111f;
+    --surface:   rgba(255,255,255,0.035);
+    --border:    rgba(0,180,255,0.13);
+    --border-hi: rgba(0,220,255,0.35);
+    --accent:    #00cfff;
+    --accent2:   #00ffbb;
+    --text:      #cde8f5;
+    --muted:     #4d7a94;
+    --danger:    #ff4e6a;
+    --warn:      #ffb74d;
+    --ok:        #00e5a0;
 }
-[data-testid="stAppViewContainer"] > .main { background: transparent !important; }
-[data-testid="stHeader"] { background: transparent !important; }
-[data-testid="stSidebar"] { display: none; }
-.block-container { padding: 0 !important; max-width: 100% !important; }
-section.main > div { padding-top: 0 !important; }
 
-/* ── Animated water background ── */
-body::before {
+/* ── Base ── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body,
+[data-testid="stAppViewContainer"],
+[data-testid="stAppViewContainer"] > .main {
+    background: var(--bg) !important;
+    font-family: 'Outfit', sans-serif !important;
+    color: var(--text) !important;
+}
+[data-testid="stHeader"]  { background: transparent !important; }
+[data-testid="stSidebar"] { display: none !important; }
+.block-container          { padding: 0 !important; max-width: 100% !important; }
+section.main > div        { padding-top: 0 !important; }
+
+/* ── Animated background ── */
+[data-testid="stAppViewContainer"]::before {
     content: '';
-    position: fixed; inset: 0; z-index: 0;
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
     background:
-        radial-gradient(ellipse 80% 60% at 20% 30%, rgba(0,120,200,.18) 0%, transparent 70%),
-        radial-gradient(ellipse 60% 50% at 80% 70%, rgba(0,200,180,.12) 0%, transparent 70%),
-        radial-gradient(ellipse 40% 40% at 60% 10%, rgba(30,60,120,.25) 0%, transparent 70%),
-        #020b18;
-    animation: bgPulse 12s ease-in-out infinite alternate;
+        radial-gradient(ellipse 70% 55% at 15% 25%, rgba(0,140,255,.11) 0%, transparent 65%),
+        radial-gradient(ellipse 55% 45% at 85% 75%, rgba(0,255,180,.08) 0%, transparent 65%),
+        radial-gradient(ellipse 40% 35% at 55%  5%, rgba(0,60,140,.18)  0%, transparent 60%);
+    animation: bgPulse 14s ease-in-out infinite alternate;
 }
 @keyframes bgPulse {
-    0%  { background-position: 0% 50%; }
-    100%{ background-position: 100% 50%; }
+    0%   { opacity: .8; }
+    100% { opacity: 1;  }
 }
 
-/* Floating particle layer */
-body::after {
+/* ── Particle dots ── */
+[data-testid="stAppViewContainer"]::after {
     content: '';
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
     background-image:
-        radial-gradient(circle, rgba(0,180,255,.35) 1px, transparent 1px),
-        radial-gradient(circle, rgba(0,255,200,.25) 1px, transparent 1px);
-    background-size: 60px 60px, 90px 90px;
-    background-position: 0 0, 30px 30px;
-    animation: particleDrift 20s linear infinite;
-    opacity: .4;
+        radial-gradient(circle, rgba(0,200,255,.3) 1px, transparent 1px),
+        radial-gradient(circle, rgba(0,255,180,.2) 1px, transparent 1px);
+    background-size: 55px 55px, 85px 85px;
+    background-position: 0 0, 27px 27px;
+    animation: drift 22s linear infinite;
+    opacity: .35;
 }
-@keyframes particleDrift {
-    0%   { transform: translateY(0) translateX(0); }
-    100% { transform: translateY(-60px) translateX(20px); }
-}
-
-/* ── Layout wrapper ── */
-.aq-wrap { position: relative; z-index: 1; }
-
-/* ── HERO ── */
-.hero {
-    min-height: 100vh;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    text-align: center;
-    padding: 60px 24px;
-    position: relative; overflow: hidden;
-}
-.hero-drop {
-    font-size: clamp(80px,15vw,160px); line-height: 1;
-    animation: dropFloat 4s ease-in-out infinite;
-    display: block; margin-bottom: 8px;
-}
-@keyframes dropFloat {
-    0%,100%{ transform: translateY(0) scale(1); filter: drop-shadow(0 0 30px rgba(0,180,255,.6)); }
-    50%    { transform: translateY(-18px) scale(1.05); filter: drop-shadow(0 0 60px rgba(0,255,200,.8)); }
-}
-.hero h1 {
-    font-family: 'Syne', sans-serif;
-    font-size: clamp(36px,6vw,88px); font-weight: 800;
-    letter-spacing: -2px; line-height: 1.05;
-    background: linear-gradient(135deg, #00d4ff 0%, #00ffcc 40%, #4facfe 100%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
-    margin-bottom: 16px;
-}
-.hero-sub {
-    font-size: clamp(15px,2vw,20px); font-weight: 300; color: #7db8d4;
-    max-width: 580px; line-height: 1.7; margin: 0 auto 40px;
-    font-style: italic;
-}
-.hero-stats {
-    display: flex; gap: 40px; justify-content: center; flex-wrap: wrap;
-    margin-bottom: 52px;
-}
-.stat-pill {
-    background: rgba(0,180,255,.08);
-    border: 1px solid rgba(0,180,255,.25);
-    border-radius: 100px; padding: 10px 28px;
-    backdrop-filter: blur(12px);
-    font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 600;
-    color: #00d4ff; letter-spacing: .5px;
-    transition: all .3s ease;
-}
-.stat-pill:hover {
-    background: rgba(0,180,255,.18);
-    border-color: rgba(0,255,200,.5);
-    transform: translateY(-3px);
-}
-.hero-cta {
-    display: inline-block;
-    padding: 16px 48px; border-radius: 100px;
-    background: linear-gradient(135deg, #00d4ff, #00ffcc);
-    color: #020b18; font-family: 'Syne', sans-serif;
-    font-weight: 700; font-size: 17px; letter-spacing: .5px;
-    text-decoration: none; cursor: pointer; border: none;
-    box-shadow: 0 0 40px rgba(0,212,255,.35);
-    transition: all .3s ease;
-}
-.hero-cta:hover {
-    transform: translateY(-4px) scale(1.03);
-    box-shadow: 0 0 70px rgba(0,212,255,.55);
+@keyframes drift {
+    0%   { transform: translateY(0); }
+    100% { transform: translateY(-55px); }
 }
 
-/* Scroll chevron */
-.scroll-hint {
-    position: absolute; bottom: 36px; left: 50%; transform: translateX(-50%);
-    animation: bounce 2s infinite;
-    color: rgba(0,212,255,.5); font-size: 28px;
-}
-@keyframes bounce {
-    0%,100%{ transform: translateX(-50%) translateY(0); }
-    50%    { transform: translateX(-50%) translateY(10px); }
-}
-
-/* ── NAV TABS ── */
-.tab-nav {
-    display: flex; gap: 0; overflow-x: auto;
-    background: rgba(2,11,24,.85);
-    border-bottom: 1px solid rgba(0,180,255,.15);
-    position: sticky; top: 0; z-index: 100;
-    backdrop-filter: blur(20px);
-    padding: 0 24px;
-}
-.tab-nav::-webkit-scrollbar { display: none; }
-.tab-btn {
-    padding: 18px 28px; border: none; background: none;
-    color: #7db8d4; font-family: 'Syne', sans-serif;
-    font-size: 13px; font-weight: 600; letter-spacing: .8px;
-    text-transform: uppercase; cursor: pointer; white-space: nowrap;
-    border-bottom: 2px solid transparent;
-    transition: all .3s ease; position: relative;
-}
-.tab-btn:hover  { color: #00d4ff; }
-.tab-btn.active { color: #00d4ff; border-bottom-color: #00d4ff; }
-.tab-btn .tab-icon { margin-right: 8px; }
-
-/* ── Section wrapper ── */
-.section {
-    padding: 72px clamp(16px,5vw,80px);
+/* Ensure content sits above bg layers */
+[data-testid="stVerticalBlock"],
+[data-testid="stHorizontalBlock"],
+.element-container, .stTabs, iframe {
     position: relative; z-index: 1;
 }
-.section-tag {
-    font-family: 'Syne', sans-serif; font-size: 11px; font-weight: 700;
-    letter-spacing: 3px; color: #00ffcc; text-transform: uppercase;
-    margin-bottom: 12px;
+
+/* ══════════════════════════════════
+   HERO
+══════════════════════════════════ */
+.hero {
+    padding: 52px clamp(20px,6vw,90px) 38px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 28px; flex-wrap: wrap;
+    background: linear-gradient(180deg, rgba(0,120,255,.06) 0%, transparent 100%);
+    position: relative; overflow: hidden;
 }
-.section-title {
-    font-family: 'Syne', sans-serif; font-size: clamp(28px,4vw,52px);
-    font-weight: 800; line-height: 1.1;
-    background: linear-gradient(135deg, #d4eaf7 30%, #00d4ff);
+.hero::after {
+    content: '';
+    position: absolute; right: -60px; top: -60px;
+    width: 380px; height: 380px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(0,200,255,.07) 0%, transparent 70%);
+    pointer-events: none;
+}
+.hero-icon {
+    font-size: 60px; line-height: 1;
+    animation: dropFloat 4s ease-in-out infinite;
+    filter: drop-shadow(0 0 24px rgba(0,200,255,.55));
+    flex-shrink: 0;
+}
+@keyframes dropFloat {
+    0%,100% { transform: translateY(0)     scale(1);    }
+    50%      { transform: translateY(-12px) scale(1.07); }
+}
+.hero-text h1 {
+    font-size: clamp(26px,4vw,50px);
+    font-weight: 800; letter-spacing: -1.5px; line-height: 1.08;
+    background: linear-gradient(120deg, #ffffff 0%, var(--accent) 55%, var(--accent2) 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text; margin-bottom: 12px;
+    background-clip: text; margin: 0 0 8px;
 }
-.section-lead {
-    color: #7db8d4; font-size: 17px; max-width: 560px;
-    line-height: 1.7; margin-bottom: 48px; font-weight: 300;
+.hero-text p {
+    color: var(--muted); font-size: 15px; font-weight: 400;
+    line-height: 1.65; max-width: 520px; margin: 0;
 }
-
-/* ── CARDS ── */
-.card-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); }
-.card {
-    background: rgba(255,255,255,.03);
-    border: 1px solid rgba(0,180,255,.12);
-    border-radius: 20px; padding: 28px 28px 32px;
-    backdrop-filter: blur(12px);
-    transition: all .35s ease; position: relative; overflow: hidden;
+.hero-pills {
+    display: flex; gap: 9px; flex-wrap: wrap; margin-top: 18px;
 }
-.card::before {
-    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
-    background: linear-gradient(90deg, transparent, #00d4ff, transparent);
-    opacity: 0; transition: opacity .35s;
-}
-.card:hover { transform: translateY(-6px); border-color: rgba(0,180,255,.35); box-shadow: 0 20px 60px rgba(0,0,0,.4); }
-.card:hover::before { opacity: 1; }
-.card-icon { font-size: 36px; margin-bottom: 16px; display: block; }
-.card h3 { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; color:#d4eaf7; margin-bottom:8px; }
-.card p  { color:#7db8d4; font-size:14px; line-height:1.7; font-weight:300; }
-
-/* ── FORM CARD ── */
-.form-card {
-    background: rgba(255,255,255,.03);
-    border: 1px solid rgba(0,180,255,.15);
-    border-radius: 24px; padding: 40px;
-    backdrop-filter: blur(16px);
-    max-width: 900px;
+.pill {
+    background: rgba(0,200,255,.08);
+    border: 1px solid rgba(0,200,255,.2);
+    border-radius: 100px; padding: 5px 14px;
+    font-size: 12px; font-weight: 600; letter-spacing: .4px;
+    color: var(--accent);
 }
 
-/* Streamlit widget overrides */
-[data-testid="stNumberInput"] label,
-[data-testid="stSelectbox"] label,
-[data-testid="stSlider"] label {
-    color: #7db8d4 !important;
-    font-family: 'DM Sans', sans-serif !important;
-    font-size: 13px !important; letter-spacing: .3px;
+/* ══════════════════════════════════
+   MAP SECTION HEADER
+══════════════════════════════════ */
+.map-section-header {
+    padding: 28px clamp(20px,6vw,90px) 16px;
+}
+.section-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 3px;
+    text-transform: uppercase; color: var(--accent2); margin-bottom: 6px;
+}
+.map-card {
+    border: 1px solid var(--border);
+    border-radius: 18px; overflow: hidden;
+    box-shadow: 0 8px 40px rgba(0,0,0,.4);
+}
+
+/* ══════════════════════════════════
+   STATION BAR
+══════════════════════════════════ */
+.station-bar {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 14px clamp(20px,6vw,90px);
+    background: rgba(0,0,0,.28);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+    backdrop-filter: blur(18px);
+}
+.station-badge {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(0,200,255,.06);
+    border: 1px solid var(--border-hi);
+    border-radius: 12px; padding: 10px 16px;
+    font-size: 14px;
+}
+.sbadge-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+.sbadge-value { color: #fff; font-weight: 700; font-size: 15px; margin-top: 2px; }
+.sbadge-sub   { color: var(--accent2); font-size: 12px; margin-top: 1px; }
+
+/* ══════════════════════════════════
+   TABS
+══════════════════════════════════ */
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(0,0,0,.3) !important;
+    border-bottom: 1px solid var(--border) !important;
+    padding: 0 clamp(20px,6vw,90px) !important;
+    gap: 0 !important;
+    backdrop-filter: blur(14px);
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    color: var(--muted) !important;
+    border: none !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    padding: 16px 26px !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 13px !important; font-weight: 600 !important;
+    letter-spacing: .6px !important; text-transform: uppercase !important;
+    transition: all .22s ease !important;
+}
+.stTabs [data-baseweb="tab"]:hover  { color: var(--accent) !important; }
+.stTabs [aria-selected="true"] {
+    color: var(--accent) !important;
+    border-bottom-color: var(--accent) !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab-panel"] {
+    padding: 34px clamp(20px,6vw,90px) 56px !important;
+    background: transparent !important;
+}
+
+/* ══════════════════════════════════
+   WIDGETS
+══════════════════════════════════ */
+label,
+.stSlider label,
+.stSelectbox label,
+[data-testid="stWidgetLabel"] p {
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 11px !important; font-weight: 700 !important;
+    letter-spacing: .9px !important; text-transform: uppercase !important;
+    color: var(--muted) !important;
 }
 [data-testid="stNumberInput"] input,
-[data-testid="stTextInput"] input {
-    background: rgba(0,180,255,.06) !important;
-    border: 1px solid rgba(0,180,255,.2) !important;
+[data-testid="stTextInput"]   input {
+    background: rgba(0,180,255,.05) !important;
+    border: 1px solid var(--border) !important;
     border-radius: 10px !important;
-    color: #d4eaf7 !important;
+    color: #fff !important;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 14px !important;
+    transition: border-color .2s !important;
 }
 [data-testid="stNumberInput"] input:focus,
-[data-testid="stTextInput"] input:focus {
-    border-color: rgba(0,212,255,.6) !important;
-    box-shadow: 0 0 0 2px rgba(0,212,255,.15) !important;
+[data-testid="stTextInput"]   input:focus {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px rgba(0,200,255,.12) !important;
 }
-div[data-testid="stSlider"] > div > div > div {
-    background: linear-gradient(90deg,#00d4ff,#00ffcc) !important;
+[data-testid="stSelectbox"] > div > div {
+    background: rgba(0,180,255,.05) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    color: #fff !important;
+}
+[data-testid="stSlider"] > div > div > div {
+    background: linear-gradient(90deg, var(--accent), var(--accent2)) !important;
+}
+[data-testid="stSlider"] [role="slider"] {
+    background: var(--accent) !important;
+    border: 2px solid #fff !important;
+    box-shadow: 0 0 12px rgba(0,200,255,.5) !important;
 }
 .stButton > button {
-    background: linear-gradient(135deg,#00d4ff,#00ffcc) !important;
-    color: #020b18 !important; border: none !important;
-    border-radius: 100px !important; padding: 14px 36px !important;
-    font-family: 'Syne', sans-serif !important;
-    font-weight: 700 !important; font-size: 15px !important;
-    transition: all .3s ease !important;
-    box-shadow: 0 0 30px rgba(0,212,255,.25) !important;
+    background: linear-gradient(135deg, var(--accent), var(--accent2)) !important;
+    color: #04111f !important;
+    border: none !important;
+    border-radius: 100px !important;
+    padding: 12px 30px !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important; font-size: 14px !important;
+    box-shadow: 0 0 22px rgba(0,200,255,.22) !important;
+    transition: all .22s ease !important;
 }
 .stButton > button:hover {
     transform: translateY(-3px) !important;
-    box-shadow: 0 0 55px rgba(0,212,255,.45) !important;
+    box-shadow: 0 0 42px rgba(0,200,255,.42) !important;
 }
-[data-testid="stSelectbox"] > div > div {
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border) !important;
+    border-radius: 14px !important; overflow: hidden;
+}
+[data-testid="stDataFrame"] th {
+    background: rgba(0,180,255,.1) !important;
+    color: var(--accent) !important;
+    font-family: 'Outfit', sans-serif !important;
+    font-size: 11px !important; letter-spacing: .8px !important;
+    text-transform: uppercase !important;
+}
+[data-testid="stDataFrame"] td {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 13px !important; color: var(--text) !important;
+}
+[data-testid="stMetric"] {
     background: rgba(0,180,255,.06) !important;
-    border: 1px solid rgba(0,180,255,.2) !important;
-    border-radius: 10px !important;
-    color: #d4eaf7 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 16px !important; padding: 20px 24px !important;
 }
+[data-testid="stMetricLabel"] p { color: var(--muted) !important; font-size: 12px !important; }
+[data-testid="stMetricValue"]   { color: var(--accent) !important; font-size: 32px !important; font-weight: 800 !important; }
+[data-testid="stAlert"]         { border-radius: 12px !important; font-family: 'Outfit', sans-serif !important; }
+div[data-testid="stAlert"][kind="success"] {
+    background: rgba(0,229,160,.08) !important;
+    border-color: var(--ok) !important; color: var(--ok) !important;
+}
+h2, h3 {
+    font-family: 'Outfit', sans-serif !important;
+    font-weight: 700 !important; letter-spacing: -.4px !important;
+    color: #fff !important;
+}
+hr { border-color: var(--border) !important; }
+[data-testid="stMarkdownContainer"] p { color: var(--text); }
 
-/* ── RESULT BADGE ── */
-.result-safe {
-    display: inline-flex; align-items: center; gap: 12px;
-    background: linear-gradient(135deg, rgba(0,255,150,.12), rgba(0,200,120,.06));
-    border: 1px solid rgba(0,255,150,.3);
-    border-radius: 16px; padding: 20px 32px;
-    font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700;
-    color: #00ff96; margin: 20px 0;
-    animation: glowSafe 2s ease-in-out infinite alternate;
+/* ── Chat bubbles ── */
+.chat-user { display:flex; justify-content:flex-end; margin-bottom:14px; }
+.chat-ai   { display:flex; justify-content:flex-start; margin-bottom:14px; }
+.bubble { max-width:75%; padding:12px 18px; border-radius:18px; font-size:14px; line-height:1.65; }
+.bubble-user {
+    background: rgba(0,200,255,.14);
+    border: 1px solid rgba(0,200,255,.25);
+    border-top-right-radius: 4px; color: #fff; text-align: right;
 }
-.result-unsafe {
-    display: inline-flex; align-items: center; gap: 12px;
-    background: linear-gradient(135deg, rgba(255,80,80,.12), rgba(200,40,40,.06));
-    border: 1px solid rgba(255,80,80,.3);
-    border-radius: 16px; padding: 20px 32px;
-    font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 700;
-    color: #ff5555; margin: 20px 0;
-    animation: glowUnsafe 2s ease-in-out infinite alternate;
+.bubble-ai {
+    background: rgba(255,255,255,.05);
+    border: 1px solid var(--border);
+    border-top-left-radius: 4px; color: var(--text);
 }
-@keyframes glowSafe   { 0%{box-shadow:0 0 20px rgba(0,255,150,.2)} 100%{box-shadow:0 0 40px rgba(0,255,150,.45)} }
-@keyframes glowUnsafe { 0%{box-shadow:0 0 20px rgba(255,80,80,.2)} 100%{box-shadow:0 0 40px rgba(255,80,80,.45)} }
+.chat-lbl      { font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:5px; }
+.chat-lbl-ai   { color: var(--accent2); }
+.chat-lbl-user { color: var(--accent); text-align:right; }
 
-/* ── METRIC PILL ── */
-.metric-row { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:24px; }
-.metric-pill {
-    flex: 1; min-width: 140px;
-    background: rgba(0,180,255,.07);
-    border: 1px solid rgba(0,180,255,.15);
-    border-radius: 14px; padding: 18px 20px; text-align: center;
+/* ── WHO info box ── */
+.who-info {
+    background: rgba(0,180,255,.05);
+    border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px 22px; margin-bottom: 22px;
+    font-size: 14px; color: var(--muted); line-height: 1.7;
 }
-.metric-pill .val { font-family:'Syne',sans-serif; font-size:26px; font-weight:800; color:#00d4ff; }
-.metric-pill .lbl { font-size:11px; color:#7db8d4; letter-spacing:1px; text-transform:uppercase; margin-top:4px; }
+.who-info strong { color: var(--text); }
 
-/* ── WHO TABLE ── */
-.who-table { width:100%; border-collapse:collapse; }
-.who-table th {
-    background: rgba(0,180,255,.12);
-    color: #00d4ff; font-family:'Syne',sans-serif; font-size:12px;
-    letter-spacing:1px; text-transform:uppercase;
-    padding: 14px 20px; text-align:left;
-    border-bottom: 1px solid rgba(0,180,255,.2);
+/* ── WQI Legend box ── */
+.legend-box {
+    background: rgba(0,180,255,.05);
+    border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px 20px;
+    display: flex; flex-direction: column; gap: 10px;
 }
-.who-table td {
-    padding: 13px 20px; font-size:14px; color:#b0cce0;
-    border-bottom: 1px solid rgba(0,180,255,.07);
-}
-.who-table tr:hover td { background: rgba(0,180,255,.05); color:#d4eaf7; }
-.who-ok   { color:#00ff96 !important; font-weight:600; }
-.who-warn { color:#ffcc00 !important; font-weight:600; }
-.who-bad  { color:#ff5555 !important; font-weight:600; }
-.badge {
-    display: inline-block; padding: 3px 12px; border-radius: 100px;
-    font-size: 11px; font-weight: 700; letter-spacing: .5px;
-}
-.badge-ok   { background:rgba(0,255,150,.15); color:#00ff96; }
-.badge-warn { background:rgba(255,200,0,.15);  color:#ffcc00; }
-.badge-bad  { background:rgba(255,80,80,.15);  color:#ff5555; }
-
-/* ── AI CHAT ── */
-.ai-msg-user, .ai-msg-bot {
-    display:flex; gap:14px; margin-bottom:20px; align-items:flex-start;
-}
-.ai-msg-user { flex-direction: row-reverse; }
-.ai-avatar {
-    width:36px; height:36px; border-radius:50%; flex-shrink:0;
-    display:flex; align-items:center; justify-content:center; font-size:16px;
-}
-.ai-avatar-bot { background: linear-gradient(135deg,#00d4ff,#00ffcc); color:#020b18; }
-.ai-avatar-usr { background: rgba(0,180,255,.2); color:#00d4ff; border:1px solid rgba(0,180,255,.3); }
-.ai-bubble {
-    max-width: 72%; padding: 14px 20px; border-radius: 16px; line-height: 1.65; font-size:14px;
-}
-.ai-bubble-bot {
-    background: rgba(0,180,255,.08); border: 1px solid rgba(0,180,255,.18);
-    border-top-left-radius: 4px; color:#d4eaf7;
-}
-.ai-bubble-usr {
-    background: rgba(0,212,255,.13); border: 1px solid rgba(0,212,255,.25);
-    border-top-right-radius: 4px; color:#d4eaf7; text-align:right;
-}
-
-/* ── FOOTER ── */
-.footer {
-    text-align:center; padding: 48px 24px;
-    border-top: 1px solid rgba(0,180,255,.1);
-    color: #3d6278; font-size: 13px; font-weight:300;
-    position:relative; z-index:1;
-}
-.footer span { color:#00d4ff; }
-
-/* ── Streamlit tab overrides ── */
-.stTabs [data-baseweb="tab-list"] { display:none !important; }
+.legend-item { display:flex; align-items:center; gap:10px; font-size:13px; color:var(--text); }
+.dot { width:11px;height:11px;border-radius:50%;flex-shrink:0; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Session State ────────────────────────────────────────────────────────────
-if "active_tab" not in st.session_state:
-    st.session_state.active_tab = "home"
-if "ai_history" not in st.session_state:
-    st.session_state.ai_history = []
-if "prediction_result" not in st.session_state:
-    st.session_state.prediction_result = None
+# ================= LOAD DATA =================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+stations_path = os.path.join(BASE_DIR, "data", "stations.csv")
 
-# ─── Helper: load model (graceful fallback) ───────────────────────────────────
-@st.cache_resource
-def load_model():
-    for path in ["model.pkl", "water_quality_model.pkl", "models/model.pkl"]:
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                return pickle.load(f)
-    return None
+if not os.path.exists(stations_path):
+    st.error("stations.csv missing")
+    st.stop()
 
-model = load_model()
+stations_df = pd.read_csv(stations_path)
 
-# ─── WHO Compliance Data ──────────────────────────────────────────────────────
-WHO_STANDARDS = [
-    {"Parameter": "pH", "WHO Limit": "6.5 – 8.5", "Unit": "—", "Health Risk": "Corrosion / scaling"},
-    {"Parameter": "Hardness", "WHO Limit": "≤ 500", "Unit": "mg/L", "Health Risk": "Cardiovascular concern at extremes"},
-    {"Parameter": "Solids (TDS)", "WHO Limit": "≤ 500", "Unit": "mg/L", "Health Risk": "Palatability, mineral toxicity"},
-    {"Parameter": "Chloramines", "WHO Limit": "≤ 4", "Unit": "mg/L", "Health Risk": "Disinfection by-product"},
-    {"Parameter": "Sulfate", "WHO Limit": "≤ 250", "Unit": "mg/L", "Health Risk": "Laxative effect"},
-    {"Parameter": "Conductivity", "WHO Limit": "≤ 400", "Unit": "µS/cm", "Health Risk": "Indicator of dissolved ions"},
-    {"Parameter": "Organic Carbon", "WHO Limit": "≤ 2", "Unit": "mg/L", "Health Risk": "Disinfection by-product precursor"},
-    {"Parameter": "Trihalomethanes", "WHO Limit": "≤ 80", "Unit": "µg/L", "Health Risk": "Carcinogenic risk"},
-    {"Parameter": "Turbidity", "WHO Limit": "≤ 1", "Unit": "NTU", "Health Risk": "Pathogen indicator"},
-]
+# ================= WHO LIMITS =================
+WHO_LIMITS = {
+    "NH4": 0.5, "BSK5": 3, "Suspended": 25,
+    "O2": 4, "NO3": 50, "NO2": 3,
+    "SO4": 250, "PO4": 0.5, "CL": 250
+}
 
-# ─── Navigation ───────────────────────────────────────────────────────────────
-def nav(tab_id):
-    st.session_state.active_tab = tab_id
+# ================= UTILS =================
+def get_color(wqi):
+    return "green" if wqi < 50 else "orange" if wqi < 100 else "red"
 
-# ─── HERO SECTION ─────────────────────────────────────────────────────────────
-def render_hero():
-    st.markdown("""
-    <div class="aq-wrap">
-    <section class="hero">
-        <span class="hero-drop">💧</span>
-        <h1>AquaGuard</h1>
-        <p class="hero-sub">
-            AI-powered water quality intelligence. Know what's in your water —
-            instantly, accurately, and at scale.
+def get_nearest_station(lat, lon):
+    df = stations_df.copy()
+    df["dist"] = ((df["lat"] - lat)**2 + (df["lon"] - lon)**2) ** 0.5
+    return df.loc[df["dist"].idxmin()]
+
+def compute_quality(pred):
+    score = 0
+    compliance = {}
+    for k, v in pred.items():
+        limit = WHO_LIMITS[k]
+        ok = v >= limit if k == "O2" else v <= limit
+        compliance[k] = ok
+        score += int(ok)
+    return (score / len(pred)) * 100, compliance
+
+def generate_ai(pred):
+    if pred["NO3"] > 50:
+        return "⚠ High nitrate → harmful for infants."
+    if pred["BSK5"] > 3:
+        return "⚠ Organic pollution detected."
+    return "✅ Water is within acceptable limits."
+
+# ================= HEATMAP DATA =================
+@st.cache_data
+def load_heatmap():
+    data = []
+    for _, row in stations_df.iterrows():
+        try:
+            res = requests.post(
+                f"{API_URL}/predict",
+                json={"year": 2022, "station_id": str(row["id"])},
+                timeout=3
+            )
+            if res.status_code == 200:
+                wqi = res.json()["wqi_score"]
+                data.append({
+                    "lat": row["lat"], "lon": row["lon"],
+                    "name": row["name"], "id": row["id"], "wqi": wqi
+                })
+        except:
+            pass
+    return pd.DataFrame(data)
+
+heatmap_df = load_heatmap()
+
+# ═══════════════════════════════════════
+#  HERO
+# ═══════════════════════════════════════
+st.markdown("""
+<div class="hero">
+    <div class="hero-icon">💧</div>
+    <div class="hero-text">
+        <h1>Water Quality Intelligence</h1>
+        <p>
+            Select a monitoring station on the map, run ML predictions, explore pollutant
+            trends, get AI-powered health insights, and check WHO compliance — all in one place.
         </p>
-        <div class="hero-stats">
-            <span class="stat-pill">🧬 ML-Powered Prediction</span>
-            <span class="stat-pill">🌍 WHO Compliance Check</span>
-            <span class="stat-pill">📊 Deep Analytics</span>
-            <span class="stat-pill">🤖 AI Assistant</span>
-        </div>
-    </section>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2, col3 = st.columns([1,1,1])
-    with col1:
-        if st.button("🔬 Run Prediction", use_container_width=True):
-            nav("predict")
-            st.rerun()
-    with col2:
-        if st.button("📊 View Analysis", use_container_width=True):
-            nav("analysis")
-            st.rerun()
-    with col3:
-        if st.button("🤖 Ask AI", use_container_width=True):
-            nav("ai")
-            st.rerun()
-
-    # Feature cards
-    st.markdown("""
-    <div class="aq-wrap section">
-        <p class="section-tag">What We Offer</p>
-        <h2 class="section-title">Complete Water Intelligence</h2>
-        <p class="section-lead">From raw sensor readings to actionable insights — AquaGuard covers the full pipeline.</p>
-        <div class="card-grid">
-            <div class="card">
-                <span class="card-icon">🔬</span>
-                <h3>ML Prediction</h3>
-                <p>Input 9 physicochemical parameters and get an instant potability verdict powered by a trained machine learning model.</p>
-            </div>
-            <div class="card">
-                <span class="card-icon">📈</span>
-                <h3>Parameter Analysis</h3>
-                <p>Interactive charts showing parameter distributions, correlations, and risk zones — visualise your data like never before.</p>
-            </div>
-            <div class="card">
-                <span class="card-icon">🤖</span>
-                <h3>AI Assistant</h3>
-                <p>Ask anything about water quality. Get expert-level answers powered by Claude — your always-on water quality advisor.</p>
-            </div>
-            <div class="card">
-                <span class="card-icon">🌍</span>
-                <h3>WHO Compliance</h3>
-                <p>Cross-reference your readings against official WHO drinking water guidelines and get a traffic-light compliance report.</p>
-            </div>
-            <div class="card">
-                <span class="card-icon">📋</span>
-                <h3>Batch Reports</h3>
-                <p>Upload a CSV of samples and get a full compliance report with individual risk flags and summary statistics.</p>
-            </div>
-            <div class="card">
-                <span class="card-icon">⚡</span>
-                <h3>Real-time Alerts</h3>
-                <p>Threshold-based alert logic highlights parameters that exceed safe limits the moment data is entered.</p>
-            </div>
+        <div class="hero-pills">
+            <span class="pill">🗺 Live Station Map</span>
+            <span class="pill">🔬 ML Prediction</span>
+            <span class="pill">📈 Trend Analysis</span>
+            <span class="pill">🤖 AI Insights</span>
+            <span class="pill">🌍 WHO Standards</span>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+</div>
+""", unsafe_allow_html=True)
 
+# ═══════════════════════════════════════
+#  MAP
+# ═══════════════════════════════════════
+st.markdown("""
+<div class="map-section-header">
+    <p class="section-label">🗺 Station Network — click a station on the map</p>
+</div>
+""", unsafe_allow_html=True)
 
-# ─── PREDICTION TAB ───────────────────────────────────────────────────────────
-def render_prediction():
-    st.markdown("""
-    <div class="aq-wrap section">
-        <p class="section-tag">Machine Learning</p>
-        <h2 class="section-title">Water Potability Prediction</h2>
-        <p class="section-lead">Enter the 9 physicochemical parameters below. Our model will predict whether the water sample is safe to drink.</p>
-    </div>
-    """, unsafe_allow_html=True)
+pad_l, pad_r = st.columns([20, 1])          # full-width padding trick
+with pad_l:
+    col_map, col_side = st.columns([3, 1])
 
-    st.markdown('<div class="aq-wrap" style="padding:0 clamp(16px,5vw,80px) 24px;">', unsafe_allow_html=True)
-    st.markdown('<div class="form-card">', unsafe_allow_html=True)
+    with col_map:
+        st.markdown('<div class="map-card">', unsafe_allow_html=True)
+        m = folium.Map(
+            location=[22.5, 78.9], zoom_start=5,
+            tiles="CartoDB dark_matter"
+        )
+        for _, row in heatmap_df.iterrows():
+            color = get_color(row["wqi"])
+            folium.CircleMarker(
+                location=[row["lat"], row["lon"]],
+                radius=9, color=color,
+                fill=True, fill_color=color, fill_opacity=0.75, weight=2,
+                popup=folium.Popup(
+                    f"<b style='font-family:sans-serif'>{row['name']}</b><br>WQI: <b>{row['wqi']:.1f}</b>",
+                    max_width=160
+                )
+            ).add_to(m)
+        map_data = st_folium(m, width="100%", height=440)
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        ph          = st.number_input("⚗️ pH Level",              min_value=0.0, max_value=14.0, value=7.0,    step=0.01, format="%.2f")
-        hardness    = st.number_input("🪨 Hardness (mg/L)",        min_value=0.0, max_value=1000.0,value=200.0, step=0.1)
-        solids      = st.number_input("🧂 TDS (mg/L)",             min_value=0.0, max_value=70000.0,value=20000.0,step=1.0)
-    with col2:
-        chloramines = st.number_input("🧪 Chloramines (mg/L)",     min_value=0.0, max_value=20.0, value=7.0,    step=0.01)
-        sulfate     = st.number_input("🌋 Sulfate (mg/L)",         min_value=0.0, max_value=500.0,value=333.0,  step=0.1)
-        conductivity= st.number_input("⚡ Conductivity (µS/cm)",   min_value=0.0, max_value=1000.0,value=400.0, step=0.1)
-    with col3:
-        organic_c   = st.number_input("🌿 Organic Carbon (mg/L)", min_value=0.0, max_value=30.0, value=14.0,   step=0.01)
-        trihalometh = st.number_input("☣️ Trihalomethanes (µg/L)",min_value=0.0, max_value=130.0,value=66.0,   step=0.01)
-        turbidity   = st.number_input("🌊 Turbidity (NTU)",       min_value=0.0, max_value=10.0, value=4.0,    step=0.01)
+    with col_side:
+        # ── Station selector panel ──
+        st.markdown("""
+        <div style="background:rgba(0,180,255,.05);border:1px solid rgba(0,180,255,.14);
+                    border-radius:16px;padding:20px 18px 16px;">
+            <p class="section-label" style="margin-bottom:14px;">Select Station</p>
+        """, unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        if "station" not in st.session_state:
+            st.session_state.station = str(stations_df.iloc[0]["id"])
 
-    input_data = np.array([[ph, hardness, solids, chloramines, sulfate,
-                            conductivity, organic_c, trihalometh, turbidity]])
+        # click handling — UNCHANGED
+        if map_data and map_data.get("last_clicked"):
+            lat = map_data["last_clicked"]["lat"]
+            lon = map_data["last_clicked"]["lng"]
+            nearest = get_nearest_station(lat, lon)
+            st.session_state.station = str(nearest["id"])
+            st.success(f"📍 {nearest['name']} ({nearest['city']})")
 
-    # Live parameter status alerts
-    alerts = []
-    if not (6.5 <= ph <= 8.5):      alerts.append(("⚗️ pH", f"{ph:.2f}", "Outside WHO range 6.5–8.5"))
-    if hardness > 500:               alerts.append(("🪨 Hardness", f"{hardness:.0f} mg/L", "Exceeds 500 mg/L"))
-    if solids > 500:                 alerts.append(("🧂 TDS", f"{solids:.0f} mg/L", "Exceeds 500 mg/L"))
-    if chloramines > 4:              alerts.append(("🧪 Chloramines", f"{chloramines:.2f} mg/L", "Exceeds 4 mg/L"))
-    if sulfate > 250:                alerts.append(("🌋 Sulfate", f"{sulfate:.0f} mg/L", "Exceeds 250 mg/L"))
-    if conductivity > 400:           alerts.append(("⚡ Conductivity", f"{conductivity:.0f} µS/cm", "Exceeds 400 µS/cm"))
-    if organic_c > 2:                alerts.append(("🌿 Organic Carbon", f"{organic_c:.2f} mg/L", "Exceeds 2 mg/L"))
-    if trihalometh > 80:             alerts.append(("☣️ Trihalomethanes", f"{trihalometh:.2f} µg/L", "Exceeds 80 µg/L"))
-    if turbidity > 1:                alerts.append(("🌊 Turbidity", f"{turbidity:.2f} NTU", "Exceeds 1 NTU"))
+        selected_station = st.session_state.station
 
-    if alerts:
-        warn_html = "".join([f'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,200,0,.1);">'
-                             f'<span style="min-width:150px;font-weight:600;color:#d4eaf7">{a[0]}</span>'
-                             f'<span style="min-width:110px;color:#ffcc00;font-weight:700">{a[1]}</span>'
-                             f'<span style="color:#7db8d4;font-size:13px">{a[2]}</span></div>'
-                             for a in alerts])
-        st.markdown(f"""
-        <div style="background:rgba(255,200,0,.06);border:1px solid rgba(255,200,0,.25);
-                    border-radius:14px;padding:20px 24px;margin:20px 0;">
-            <p style="font-family:Syne,sans-serif;font-size:13px;font-weight:700;
-                      color:#ffcc00;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;">
-                ⚠️ {len(alerts)} Parameter{'s' if len(alerts)>1 else ''} Outside WHO Limits
-            </p>
-            {warn_html}
+        selected_label = st.selectbox(
+            "Station",
+            stations_df.apply(lambda x: f"{x['name']} ({x['city']})", axis=1),
+            label_visibility="collapsed"
+        )
+        selected_row = stations_df[
+            stations_df.apply(lambda x: f"{x['name']} ({x['city']})", axis=1) == selected_label
+        ].iloc[0]
+
+        if st.button("📍 Use This Station", use_container_width=True):
+            st.session_state.station = str(selected_row["id"])
+
+        # WQI legend
+        st.markdown("""
+        <div class="legend-box" style="margin-top:18px;">
+            <p class="section-label" style="margin:0 0 6px;">WQI Legend</p>
+            <div class="legend-item"><span class="dot" style="background:#00e676"></span>Good — WQI &lt; 50</div>
+            <div class="legend-item"><span class="dot" style="background:#ffb74d"></span>Moderate — 50–100</div>
+            <div class="legend-item"><span class="dot" style="background:#ff4e6a"></span>Poor — WQI &gt; 100</div>
+        </div>
         </div>
         """, unsafe_allow_html=True)
 
-    if st.button("🔬 Predict Water Quality", use_container_width=True):
-        if model is not None:
-            pred = model.predict(input_data)[0]
-            proba = model.predict_proba(input_data)[0] if hasattr(model, "predict_proba") else [0.5, 0.5]
-            st.session_state.prediction_result = {
-                "pred": pred, "proba": proba, "inputs": input_data[0].tolist()
-            }
+# ── Active station info bar ──
+row = stations_df[stations_df["id"] == int(selected_station)].iloc[0]
+st.markdown(f"""
+<div class="station-bar">
+    <div class="station-badge">
+        <span style="font-size:20px;">📍</span>
+        <div>
+            <div class="sbadge-label">Active Station</div>
+            <div class="sbadge-value">{row['name']}, {row['city']}</div>
+            <div class="sbadge-sub">🌊 {row['river']} · {row['state']}</div>
+        </div>
+    </div>
+    <div class="station-badge">
+        <span style="font-size:20px;">🌐</span>
+        <div>
+            <div class="sbadge-label">Coordinates</div>
+            <div class="sbadge-value">{row['lat']:.4f}°N, {row['lon']:.4f}°E</div>
+            <div class="sbadge-sub">Station ID: {row['id']}</div>
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════
+#  TABS
+# ═══════════════════════════════════════
+tabs = st.tabs(["📊 Predict", "📈 Analysis", "🤖 AI Insight", "📚 WHO Compliance"])
+
+# ───────────────────────────────────────
+#  TAB 0 — PREDICT  (logic 100% original)
+# ───────────────────────────────────────
+with tabs[0]:
+    st.markdown("""
+    <p style="color:#4d7a94;font-size:14px;margin-bottom:24px;line-height:1.7;">
+        Choose a year and run the ML model for the selected station.
+        Results include predicted pollutant concentrations and a Water Quality Index score.
+    </p>
+    """, unsafe_allow_html=True)
+
+    year = st.slider("Year", 2010, 2025, 2022)
+
+    if st.button("🔬 Run Prediction"):
+        res = requests.post(f"{API_URL}/predict", json={
+            "year": year,
+            "station_id": selected_station
+        })
+
+        if res.status_code == 200:
+            data = res.json()
+            pred = data["prediction"]
+            st.session_state["pred"] = pred
+
+            st.markdown("---")
+            st.markdown("#### 🧪 Pollutant Concentrations")
+
+            # Original dataframe — with Status column added for clarity
+            df = pd.DataFrame(pred.items(), columns=["Pollutant", "Value"])
+            df["WHO Limit"] = df["Pollutant"].map(WHO_LIMITS)
+            df["Status"] = df.apply(
+                lambda r: "✅ OK" if (
+                    r["Value"] >= r["WHO Limit"] if r["Pollutant"] == "O2"
+                    else r["Value"] <= r["WHO Limit"]
+                ) else "❌ Exceeds",
+                axis=1
+            )
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            # Original bar chart — styled colours
+            bar_df = pd.DataFrame(pred.items(), columns=["Pollutant", "Value"])
+            fig = px.bar(
+                bar_df, x="Pollutant", y="Value",
+                color="Value",
+                color_continuous_scale=[[0,"#00ffbb"],[0.5,"#00cfff"],[1,"#ff4e6a"]],
+                template="plotly_dark"
+            )
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#cde8f5", coloraxis_showscale=False,
+                margin=dict(t=10, b=20)
+            )
+            fig.update_xaxes(gridcolor="rgba(0,180,255,.08)")
+            fig.update_yaxes(gridcolor="rgba(0,180,255,.08)")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Original quality score + compliance
+            score, comp = compute_quality(pred)
+            col_a, col_b = st.columns([1, 2])
+            with col_a:
+                st.metric("Quality Score", f"{score:.2f}/100")
+            with col_b:
+                comp_df = pd.DataFrame({
+                    "Pollutant": list(comp.keys()),
+                    "Safe": list(comp.values())
+                })
+                st.dataframe(comp_df, use_container_width=True, hide_index=True)
         else:
-            # Demo fallback when no model file is present
-            score = sum([
-                1 if 6.5<=ph<=8.5 else 0,
-                1 if hardness<=500 else 0,
-                1 if solids<=500 else 0,
-                1 if chloramines<=4 else 0,
-                1 if sulfate<=250 else 0,
-                1 if conductivity<=400 else 0,
-                1 if organic_c<=2 else 0,
-                1 if trihalometh<=80 else 0,
-                1 if turbidity<=1 else 0,
-            ])
-            pred  = 1 if score >= 7 else 0
-            safe_p = score / 9
-            st.session_state.prediction_result = {
-                "pred": pred, "proba": [1-safe_p, safe_p], "inputs": input_data[0].tolist(),
-                "demo": True
-            }
+            st.error("API error")
 
-    res = st.session_state.prediction_result
-    if res:
-        safe   = res["pred"] == 1
-        conf   = res["proba"][1] if safe else res["proba"][0]
-        label  = "✅ POTABLE — Safe to Drink" if safe else "❌ NON-POTABLE — Not Safe"
-        cls    = "result-safe" if safe else "result-unsafe"
-        demo_note = '<span style="font-size:12px;color:#7db8d4;margin-left:12px;">(demo mode – load model.pkl for real predictions)</span>' if res.get("demo") else ""
+# ───────────────────────────────────────
+#  TAB 1 — ANALYSIS  (logic 100% original)
+# ───────────────────────────────────────
+with tabs[1]:
+    st.markdown("""
+    <p style="color:#4d7a94;font-size:14px;margin-bottom:24px;line-height:1.7;">
+        Visualise the Water Quality Index trend for the selected station from 2015 to 2024.
+    </p>
+    """, unsafe_allow_html=True)
 
-        st.markdown(f'<div class="{cls}">{label}{demo_note}</div>', unsafe_allow_html=True)
+    if st.button("Show Trend"):
+        years = range(2015, 2025)
+        trend = []
 
-        # Confidence gauge
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=round(conf*100, 1),
-            number={"suffix": "%", "font": {"size": 36, "color": "#00d4ff"}},
-            title={"text": "Confidence", "font": {"size": 14, "color": "#7db8d4"}},
-            gauge={
-                "axis": {"range": [0,100], "tickcolor": "#3d6278"},
-                "bar": {"color": "#00ff96" if safe else "#ff5555"},
-                "bgcolor": "rgba(0,0,0,0)",
-                "bordercolor": "rgba(0,180,255,.2)",
-                "steps": [
-                    {"range": [0,50],  "color": "rgba(255,80,80,.08)"},
-                    {"range": [50,75], "color": "rgba(255,200,0,.08)"},
-                    {"range": [75,100],"color": "rgba(0,255,150,.08)"},
-                ],
-                "threshold": {"line": {"color":"#00d4ff","width":2}, "thickness":.75,"value": conf*100}
-            }
+        with st.spinner("Fetching historical predictions…"):
+            for y in years:
+                try:
+                    res = requests.post(
+                        f"{API_URL}/predict",
+                        json={"year": y, "station_id": selected_station},
+                        timeout=3
+                    )
+                    if res.status_code == 200:
+                        trend.append({"Year": y, "WQI": res.json()["wqi_score"]})
+                except:
+                    pass
+
+        df = pd.DataFrame(trend)
+        if not df.empty:
+            fig = px.line(df, x="Year", y="WQI", markers=True,
+                          template="plotly_dark", line_shape="spline",
+                          color_discrete_sequence=["#00cfff"])
+            fig.update_traces(
+                marker=dict(size=9, color="#00ffbb", line=dict(width=2, color="#00cfff")),
+                line=dict(width=3)
+            )
+            fig.add_hline(y=100, line_dash="dash", line_color="rgba(255,78,106,.5)",
+                          annotation_text="Poor threshold (100)",
+                          annotation_font_color="#ff4e6a", annotation_position="top left")
+            fig.add_hline(y=50, line_dash="dot", line_color="rgba(255,183,77,.4)",
+                          annotation_text="Moderate threshold (50)",
+                          annotation_font_color="#ffb74d", annotation_position="top left")
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#cde8f5",
+                xaxis=dict(gridcolor="rgba(0,180,255,.08)", tickmode="linear"),
+                yaxis=dict(gridcolor="rgba(0,180,255,.08)", title="WQI Score"),
+                margin=dict(t=30, b=20)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No trend data returned from API.")
+
+# ───────────────────────────────────────
+#  TAB 2 — AI INSIGHT  (logic 100% original)
+# ───────────────────────────────────────
+with tabs[2]:
+    st.markdown("""
+    <p style="color:#4d7a94;font-size:14px;margin-bottom:24px;line-height:1.7;">
+        Ask the AI assistant anything about the current water quality prediction.
+        Run a prediction first to unlock context-aware responses.
+    </p>
+    """, unsafe_allow_html=True)
+
+    if "pred" not in st.session_state:
+        st.info("Run a prediction in the **📊 Predict** tab first to enable AI insights.")
+        st.stop()
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Suggested prompts — original
+    st.markdown("##### 💡 Quick Questions")
+    col1, col2, col3 = st.columns(3)
+    if col1.button("Health Risk",  use_container_width=True):
+        st.session_state.user_input = "Explain health risks"
+    if col2.button("Treatment",    use_container_width=True):
+        st.session_state.user_input = "Suggest treatment methods"
+    if col3.button("Explain Data", use_container_width=True):
+        st.session_state.user_input = "Explain this water quality in simple terms"
+
+    user_input = st.text_input(
+        "Ask anything about this water",
+        value=st.session_state.get("user_input", ""),
+        placeholder="e.g. Is this safe to drink? What should I do?"
+    )
+
+    if st.button("Send") and user_input:
+        st.session_state.chat_history.append(("user", user_input))
+        with st.spinner("AI is thinking… 🤖"):
+            try:
+                res = requests.post(
+                    f"{API_URL}/ai-insight",
+                    json={"prediction": st.session_state["pred"], "type": user_input}
+                )
+                ai_reply = res.json()["insight"] if res.status_code == 200 else "AI service error."
+            except Exception as e:
+                ai_reply = f"Error: {e}"
+        st.session_state.chat_history.append(("ai", ai_reply))
+        st.session_state.user_input = ""
+
+    # Chat display — styled bubbles
+    if st.session_state.chat_history:
+        st.markdown("---")
+        st.markdown("##### 💬 Conversation")
+        for role, msg in st.session_state.chat_history:
+            if role == "user":
+                st.markdown(f"""
+                <div class="chat-user">
+                    <div>
+                        <div class="chat-lbl chat-lbl-user">You</div>
+                        <div class="bubble bubble-user">{msg}</div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="chat-ai">
+                    <div>
+                        <div class="chat-lbl chat-lbl-ai">🤖 AI</div>
+                        <div class="bubble bubble-ai">{msg}</div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+# ───────────────────────────────────────
+#  TAB 3 — WHO COMPLIANCE  (logic 100% original)
+# ───────────────────────────────────────
+with tabs[3]:
+    if "pred" in st.session_state:
+        pred = st.session_state["pred"]
+
+        st.markdown("""
+        <div class="who-info">
+            <strong>WHO Drinking Water Guidelines.</strong>
+            The radar chart overlays your station's predicted pollutant levels against the
+            official WHO maximum permissible limits. Areas where your sample extends
+            <em>beyond</em> the WHO boundary indicate non-compliance.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── original radar traces, styled layout ──
+        fig = go.Figure()
+        fig.add_trace(go.Scatterpolar(
+            r=list(pred.values()),
+            theta=list(pred.keys()),
+            fill='toself',
+            name='Your Water',
+            fillcolor='rgba(0,207,255,0.12)',
+            line=dict(color='#00cfff', width=2)
+        ))
+        fig.add_trace(go.Scatterpolar(
+            r=list(WHO_LIMITS.values()),
+            theta=list(WHO_LIMITS.keys()),
+            fill='toself',
+            name='WHO Limits',
+            fillcolor='rgba(255,78,106,0.08)',
+            line=dict(color='#ff4e6a', width=2, dash='dot')
         ))
         fig.update_layout(
-            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-            font_color="#d4eaf7", height=240, margin=dict(t=20,b=0,l=20,r=20)
-        )
-        st.plotly_chart(fig, use_container_width=True, key="gauge")
-
-        # Radar chart of parameter health
-        params = ["pH","Hardness","TDS","Chloramines","Sulfate","Conductivity","Org.Carbon","THMs","Turbidity"]
-        max_vals = [14, 1000, 70000, 20, 500, 1000, 30, 130, 10]
-        norm = [min(v/m, 1.0) for v,m in zip(res["inputs"], max_vals)]
-        fig2 = go.Figure(go.Scatterpolar(
-            r=norm + [norm[0]], theta=params + [params[0]],
-            fill='toself', name='Sample',
-            fillcolor='rgba(0,212,255,.12)',
-            line=dict(color='#00d4ff', width=2)
-        ))
-        fig2.update_layout(
             polar=dict(
                 bgcolor='rgba(0,0,0,0)',
-                radialaxis=dict(visible=True, range=[0,1], tickfont=dict(color='#3d6278'), gridcolor='rgba(0,180,255,.1)'),
-                angularaxis=dict(tickfont=dict(color='#7db8d4'), gridcolor='rgba(0,180,255,.1)')
+                radialaxis=dict(visible=True, gridcolor='rgba(0,180,255,.12)',
+                                tickfont=dict(color='#4d7a94', size=10)),
+                angularaxis=dict(gridcolor='rgba(0,180,255,.12)',
+                                 tickfont=dict(color='#cde8f5', size=12))
             ),
             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            showlegend=False, height=340, margin=dict(t=20,b=20)
+            font_color='#cde8f5',
+            legend=dict(bgcolor='rgba(0,0,0,.3)', bordercolor='rgba(0,180,255,.2)',
+                        borderwidth=1, font=dict(size=13)),
+            height=480, margin=dict(t=30, b=30)
         )
-        st.plotly_chart(fig2, use_container_width=True, key="radar")
+        st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ─── ANALYSIS TAB ─────────────────────────────────────────────────────────────
-def render_analysis():
-    st.markdown("""
-    <div class="aq-wrap section">
-        <p class="section-tag">Data Analytics</p>
-        <h2 class="section-title">Parameter Analysis</h2>
-        <p class="section-lead">Explore how water quality parameters are distributed, correlated, and interact with potability outcomes.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Generate synthetic representative data for demo
-    np.random.seed(42)
-    n = 300
-    demo_df = pd.DataFrame({
-        "pH":            np.random.normal(7.1, 1.0, n).clip(3, 12),
-        "Hardness":      np.random.normal(210, 80, n).clip(50, 600),
-        "Solids":        np.random.normal(22000, 8000, n).clip(2000, 60000),
-        "Chloramines":   np.random.normal(7.1, 2, n).clip(0.5, 14),
-        "Sulfate":       np.random.normal(333, 60, n).clip(120, 500),
-        "Conductivity":  np.random.normal(426, 70, n).clip(200, 750),
-        "OrganicCarbon": np.random.normal(14, 4, n).clip(2, 28),
-        "Trihalomethanes":np.random.normal(66, 16, n).clip(10, 125),
-        "Turbidity":     np.random.normal(4.0, 1.0, n).clip(1, 8),
-        "Potable":       np.random.choice([0,1], n, p=[0.61, 0.39])
-    })
-
-    tab_a, tab_b, tab_c = st.tabs(["Distribution", "Correlation", "Potability Breakdown"])
-
-    with tab_a:
-        param = st.selectbox("Select Parameter", demo_df.columns[:-1].tolist(), key="dist_param")
-        fig = go.Figure()
-        for label, color, grp in [(0, "#ff5555","Non-Potable"), (1,"#00ff96","Potable")]:
-            sub = demo_df[demo_df["Potable"]==label][param]
-            fig.add_trace(go.Histogram(x=sub, name=grp, opacity=.75,
-                                       marker_color=color, nbinsx=30))
-        fig.update_layout(
-            barmode='overlay', paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#d4eaf7', legend=dict(bgcolor='rgba(0,0,0,0)'),
-            xaxis=dict(gridcolor='rgba(0,180,255,.08)', title=param),
-            yaxis=dict(gridcolor='rgba(0,180,255,.08)', title='Count'),
-            title=f"Distribution of {param} by Potability",
-            height=380, margin=dict(t=40,b=20)
-        )
-        st.plotly_chart(fig, use_container_width=True, key="hist")
-
-    with tab_b:
-        corr = demo_df.corr(numeric_only=True)
-        fig2 = go.Figure(go.Heatmap(
-            z=corr.values, x=corr.columns, y=corr.index,
-            colorscale=[[0,'#ff5555'],[.5,'#020b18'],[1,'#00d4ff']],
-            zmin=-1, zmax=1,
-            text=corr.round(2).values,
-            texttemplate='%{text}', textfont=dict(size=11, color='#d4eaf7'),
-        ))
-        fig2.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#d4eaf7', height=440, margin=dict(t=20,b=20)
-        )
-        st.plotly_chart(fig2, use_container_width=True, key="heatmap")
-
-    with tab_c:
-        fig3 = make_subplots(rows=3, cols=3, subplot_titles=demo_df.columns[:-1].tolist())
-        for i, col in enumerate(demo_df.columns[:-1]):
-            r, c = divmod(i, 3)
-            for label, color, grp in [(0,'#ff5555','Non-Potable'),(1,'#00ff96','Potable')]:
-                fig3.add_trace(go.Box(
-                    y=demo_df[demo_df["Potable"]==label][col],
-                    name=grp, marker_color=color, showlegend=(i==0)
-                ), row=r+1, col=c+1)
-        fig3.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#d4eaf7', height=700,
-            margin=dict(t=40,b=20), boxmode='group',
-            legend=dict(bgcolor='rgba(0,0,0,0)')
-        )
-        fig3.update_xaxes(showgrid=False)
-        fig3.update_yaxes(gridcolor='rgba(0,180,255,.08)')
-        st.plotly_chart(fig3, use_container_width=True, key="boxes")
-
-    # Summary metrics
-    pot_pct = demo_df["Potable"].mean()*100
-    st.markdown(f"""
-    <div class="aq-wrap" style="padding:0 clamp(16px,5vw,80px) 48px;">
-    <div class="metric-row">
-        <div class="metric-pill"><div class="val">{n}</div><div class="lbl">Samples</div></div>
-        <div class="metric-pill"><div class="val">{pot_pct:.1f}%</div><div class="lbl">Potable</div></div>
-        <div class="metric-pill"><div class="val">{demo_df["pH"].mean():.2f}</div><div class="lbl">Avg pH</div></div>
-        <div class="metric-pill"><div class="val">{demo_df["Turbidity"].mean():.2f}</div><div class="lbl">Avg Turbidity</div></div>
-        <div class="metric-pill"><div class="val">{demo_df["Solids"].mean():.0f}</div><div class="lbl">Avg TDS</div></div>
-    </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ─── AI TAB ───────────────────────────────────────────────────────────────────
-def render_ai():
-    st.markdown("""
-    <div class="aq-wrap section">
-        <p class="section-tag">Intelligent Assistant</p>
-        <h2 class="section-title">AI Water Quality Advisor</h2>
-        <p class="section-lead">Ask anything about water quality, parameters, health risks, or treatment methods. Powered by Claude.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Render chat history
-    chat_html = ""
-    for msg in st.session_state.ai_history:
-        if msg["role"] == "user":
-            chat_html += f"""
-            <div class="ai-msg-user">
-                <div class="ai-avatar ai-avatar-usr">👤</div>
-                <div class="ai-bubble ai-bubble-usr">{msg['content']}</div>
-            </div>"""
-        else:
-            chat_html += f"""
-            <div class="ai-msg-bot">
-                <div class="ai-avatar ai-avatar-bot">💧</div>
-                <div class="ai-bubble ai-bubble-bot">{msg['content']}</div>
-            </div>"""
-
-    if chat_html:
+        # Compliance summary table
+        _, comp = compute_quality(pred)
+        rows_html = "".join([
+            f"<tr>"
+            f"<td style='padding:10px 16px;color:#cde8f5;font-family:JetBrains Mono,monospace;'>{k}</td>"
+            f"<td style='padding:10px 16px;color:#4d7a94;font-family:JetBrains Mono,monospace;'>{WHO_LIMITS[k]}</td>"
+            f"<td style='padding:10px 16px;color:#4d7a94;font-family:JetBrains Mono,monospace;'>{pred[k]:.3f}</td>"
+            f"<td style='padding:10px 16px;'>{'<span style=\"color:#00e5a0;font-weight:700;\">✅ OK</span>' if v else '<span style=\"color:#ff4e6a;font-weight:700;\">❌ Exceeds</span>'}</td>"
+            f"</tr>"
+            for k, v in comp.items()
+        ])
         st.markdown(f"""
-        <div class="aq-wrap" style="padding:0 clamp(16px,5vw,80px);">
-        <div style="background:rgba(0,0,0,.2);border:1px solid rgba(0,180,255,.1);
-                    border-radius:20px;padding:28px;margin-bottom:24px;max-height:500px;overflow-y:auto;">
-            {chat_html}
-        </div></div>""", unsafe_allow_html=True)
-
-    # Suggested questions
-    st.markdown('<div class="aq-wrap" style="padding:0 clamp(16px,5vw,80px);">', unsafe_allow_html=True)
-    suggestions = [
-        "What pH is safe for drinking water?",
-        "How does turbidity affect water quality?",
-        "What are trihalomethanes and why are they harmful?",
-        "How can high TDS be reduced?",
-    ]
-    cols = st.columns(len(suggestions))
-    for col, q in zip(cols, suggestions):
-        with col:
-            if st.button(q, key=f"sug_{q[:20]}"):
-                st.session_state.ai_history.append({"role":"user","content":q})
-                response = get_ai_response(q)
-                st.session_state.ai_history.append({"role":"assistant","content":response})
-                st.rerun()
-
-    user_input = st.text_input("Ask about water quality…", key="ai_input",
-                               placeholder="e.g. What causes high turbidity?")
-    if st.button("Send Message 🚀", use_container_width=True) and user_input.strip():
-        st.session_state.ai_history.append({"role":"user","content":user_input})
-        with st.spinner("Thinking…"):
-            response = get_ai_response(user_input)
-        st.session_state.ai_history.append({"role":"assistant","content":response})
-        st.rerun()
-
-    if st.button("🗑 Clear Chat"):
-        st.session_state.ai_history = []
-        st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-def get_ai_response(question: str) -> str:
-    """Call Anthropic API with water quality system prompt."""
-    try:
-        import requests, json
-        system_prompt = (
-            "You are AquaGuard AI, an expert water quality scientist and public health advisor. "
-            "Answer questions about water quality parameters (pH, TDS, turbidity, chloramines, "
-            "sulfate, conductivity, organic carbon, trihalomethanes, hardness), WHO guidelines, "
-            "health risks, treatment methods, and potability assessment. "
-            "Keep answers clear, concise (3-5 sentences), and scientifically accurate. "
-            "Use emojis sparingly to aid readability."
-        )
-        messages = [{"role":"user","content":question}]
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"Content-Type":"application/json"},
-            json={"model":"claude-sonnet-4-20250514","max_tokens":400,
-                  "system":system_prompt,"messages":messages},
-            timeout=20
-        )
-        data = resp.json()
-        return data["content"][0]["text"]
-    except Exception as e:
-        return (
-            "💧 I'm AquaGuard AI! I can help you understand water quality parameters, "
-            "WHO guidelines, health risks, and treatment methods. "
-            f"(Note: Connect your Anthropic API key to enable live responses. Error: {e})"
-        )
-
-
-# ─── WHO COMPLIANCE TAB ───────────────────────────────────────────────────────
-def render_who():
-    st.markdown("""
-    <div class="aq-wrap section">
-        <p class="section-tag">Regulatory Standards</p>
-        <h2 class="section-title">WHO Compliance Check</h2>
-        <p class="section-lead">Enter your sample readings and see an instant compliance report against WHO drinking water quality guidelines.</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.markdown('<div class="aq-wrap" style="padding:0 clamp(16px,5vw,80px) 24px;">', unsafe_allow_html=True)
-
-    # Input row
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        w_ph    = st.number_input("pH",                 min_value=0.0,  max_value=14.0,  value=7.2,   step=0.01, key="w_ph")
-        w_hard  = st.number_input("Hardness (mg/L)",    min_value=0.0,  max_value=1000.0,value=180.0, step=1.0,  key="w_hard")
-        w_tds   = st.number_input("TDS (mg/L)",         min_value=0.0,  max_value=5000.0,value=310.0, step=1.0,  key="w_tds")
-    with col2:
-        w_chlor = st.number_input("Chloramines (mg/L)", min_value=0.0,  max_value=20.0,  value=3.5,   step=0.01, key="w_chlor")
-        w_sulf  = st.number_input("Sulfate (mg/L)",     min_value=0.0,  max_value=500.0, value=240.0, step=0.1,  key="w_sulf")
-        w_cond  = st.number_input("Conductivity (µS/cm)",min_value=0.0, max_value=1000.0,value=380.0, step=1.0,  key="w_cond")
-    with col3:
-        w_oc    = st.number_input("Organic Carbon (mg/L)",min_value=0.0,max_value=30.0,  value=1.8,   step=0.01, key="w_oc")
-        w_thm   = st.number_input("Trihalomethanes (µg/L)",min_value=0.0,max_value=130.0,value=75.0,  step=0.1,  key="w_thm")
-        w_turb  = st.number_input("Turbidity (NTU)",    min_value=0.0,  max_value=10.0,  value=0.8,   step=0.01, key="w_turb")
-
-    sample = {
-        "pH":               (w_ph,    (6.5, 8.5),  lambda v,lo,hi: lo<=v<=hi),
-        "Hardness":         (w_hard,  (None, 500), lambda v,lo,hi: v<=hi),
-        "TDS":              (w_tds,   (None, 500), lambda v,lo,hi: v<=hi),
-        "Chloramines":      (w_chlor, (None, 4),   lambda v,lo,hi: v<=hi),
-        "Sulfate":          (w_sulf,  (None, 250), lambda v,lo,hi: v<=hi),
-        "Conductivity":     (w_cond,  (None, 400), lambda v,lo,hi: v<=hi),
-        "Organic Carbon":   (w_oc,    (None, 2),   lambda v,lo,hi: v<=hi),
-        "Trihalomethanes":  (w_thm,   (None, 80),  lambda v,lo,hi: v<=hi),
-        "Turbidity":        (w_turb,  (None, 1),   lambda v,lo,hi: v<=hi),
-    }
-
-    rows_html = ""
-    pass_count = 0
-    for param, (val, limits, check) in sample.items():
-        lo, hi = limits
-        passed = check(val, lo, hi)
-        if passed: pass_count += 1
-        limit_str = f"{lo}–{hi}" if lo else f"≤ {hi}"
-        status    = '<span class="badge badge-ok">✓ PASS</span>' if passed else '<span class="badge badge-bad">✗ FAIL</span>'
-        val_cls   = "who-ok" if passed else "who-bad"
-        unit_map  = {"pH":"—","Hardness":"mg/L","TDS":"mg/L","Chloramines":"mg/L",
-                     "Sulfate":"mg/L","Conductivity":"µS/cm","Organic Carbon":"mg/L",
-                     "Trihalomethanes":"µg/L","Turbidity":"NTU"}
-        rows_html += f"""
-        <tr>
-            <td><strong style="color:#d4eaf7">{param}</strong></td>
-            <td class="{val_cls}">{val} {unit_map[param]}</td>
-            <td style="color:#7db8d4">{limit_str} {unit_map[param]}</td>
-            <td>{status}</td>
-        </tr>"""
-
-    overall_pct = pass_count / len(sample) * 100
-    overall_cls = "badge-ok" if overall_pct == 100 else ("badge-warn" if overall_pct >= 70 else "badge-bad")
-    overall_lbl = "FULLY COMPLIANT" if overall_pct==100 else ("PARTIALLY COMPLIANT" if overall_pct>=70 else "NON-COMPLIANT")
-
-    st.markdown(f"""
-    <div style="background:rgba(0,180,255,.04);border:1px solid rgba(0,180,255,.15);
-                border-radius:20px;padding:32px;margin-top:12px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:16px;">
-            <p style="font-family:Syne,sans-serif;font-size:18px;font-weight:700;color:#d4eaf7;">
-                WHO Compliance Report
-            </p>
-            <span style="font-family:Syne,sans-serif;font-size:13px;font-weight:700;
-                         padding:8px 20px;border-radius:100px;"
-                  class="badge {overall_cls}">
-                {overall_lbl} — {pass_count}/{len(sample)} parameters
-            </span>
-        </div>
-        <table class="who-table">
-            <thead><tr>
-                <th>Parameter</th><th>Your Value</th><th>WHO Guideline</th><th>Status</th>
-            </tr></thead>
+        <table style="width:100%;border-collapse:collapse;margin-top:16px;
+                      background:rgba(0,180,255,.04);border:1px solid rgba(0,180,255,.13);
+                      border-radius:14px;overflow:hidden;">
+            <thead>
+                <tr style="background:rgba(0,180,255,.1);">
+                    <th style="padding:12px 16px;text-align:left;color:#00cfff;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Pollutant</th>
+                    <th style="padding:12px 16px;text-align:left;color:#00cfff;font-size:11px;letter-spacing:1px;text-transform:uppercase;">WHO Limit</th>
+                    <th style="padding:12px 16px;text-align:left;color:#00cfff;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Predicted</th>
+                    <th style="padding:12px 16px;text-align:left;color:#00cfff;font-size:11px;letter-spacing:1px;text-transform:uppercase;">Status</th>
+                </tr>
+            </thead>
             <tbody>{rows_html}</tbody>
         </table>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
+    else:
+        st.info("Run a prediction in the **📊 Predict** tab first to see WHO compliance.")
 
-    # Score gauge
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=overall_pct,
-        number={"suffix":"%","font":{"size":40,"color":"#00d4ff"}},
-        title={"text":"Compliance Score","font":{"size":14,"color":"#7db8d4"}},
-        gauge={
-            "axis":{"range":[0,100],"tickcolor":"#3d6278"},
-            "bar":{"color":"#00ff96" if overall_pct==100 else ("#ffcc00" if overall_pct>=70 else "#ff5555")},
-            "bgcolor":"rgba(0,0,0,0)","bordercolor":"rgba(0,180,255,.2)",
-            "steps":[{"range":[0,70],"color":"rgba(255,80,80,.08)"},
-                     {"range":[70,90],"color":"rgba(255,200,0,.08)"},
-                     {"range":[90,100],"color":"rgba(0,255,150,.08)"}]
-        }
-    ))
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",
-        font_color="#d4eaf7",height=220,margin=dict(t=20,b=0,l=20,r=20)
-    )
-    st.plotly_chart(fig, use_container_width=True, key="who_gauge")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-# ─── NAVIGATION BAR ───────────────────────────────────────────────────────────
-TABS = [
-    ("home",     "🏠", "Home"),
-    ("predict",  "🔬", "Prediction"),
-    ("analysis", "📊", "Analysis"),
-    ("ai",       "🤖", "AI Advisor"),
-    ("who",      "🌍", "WHO Compliance"),
-]
-
-def render_nav():
-    active = st.session_state.active_tab
-    nav_html = '<nav class="tab-nav">'
-    for tid, icon, label in TABS:
-        cls = "tab-btn active" if tid == active else "tab-btn"
-        nav_html += f'<button class="{cls}" onclick="void(0)"><span class="tab-icon">{icon}</span>{label}</button>'
-    nav_html += '</nav>'
-    st.markdown(nav_html, unsafe_allow_html=True)
-
-    # Actual clickable buttons hidden behind nav
-    cols = st.columns(len(TABS))
-    for col, (tid, icon, label) in zip(cols, TABS):
-        with col:
-            if st.button(f"{icon} {label}", key=f"nav_{tid}", use_container_width=True,
-                        help=f"Go to {label}"):
-                nav(tid)
-                st.rerun()
-
-# ─── MAIN ─────────────────────────────────────────────────────────────────────
-def main():
-    render_nav()
-
-    active = st.session_state.active_tab
-    if   active == "home":     render_hero()
-    elif active == "predict":  render_prediction()
-    elif active == "analysis": render_analysis()
-    elif active == "ai":       render_ai()
-    elif active == "who":      render_who()
-
-    st.markdown("""
-    <div class="footer">
-        Built with <span>💧 AquaGuard</span> · Powered by Machine Learning &amp; Claude AI ·
-        Data guidelines sourced from <span>WHO</span> drinking water standards
-    </div>
-    """, unsafe_allow_html=True)
-
-if __name__ == "__main__":
-    main()
+# ═══════════════════════════════════════
+#  FOOTER
+# ═══════════════════════════════════════
+st.markdown("""
+<div style="text-align:center;padding:40px 24px;margin-top:40px;
+            border-top:1px solid rgba(0,180,255,.1);
+            color:#2a5068;font-size:13px;font-family:Outfit,sans-serif;">
+    💧 <span style="color:#00cfff;">Water Quality Intelligence System</span> ·
+    ML predictions via <span style="color:#00cfff;">FastAPI</span> ·
+    Guidelines from <span style="color:#00cfff;">WHO</span> drinking water standards
+</div>
+""", unsafe_allow_html=True)
