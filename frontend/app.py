@@ -356,7 +356,7 @@ WHO_LIMITS = {
 
 # ================= UTILS =================
 def get_color(wqi):
-    return "green" if wqi < 50 else "orange" if wqi < 100 else "red"
+    return "#00ffbb" if wqi < 50 else "#ffb74d" if wqi < 100 else "#ff4e6a"
 
 def get_nearest_station(lat, lon):
     df = stations_df.copy()
@@ -456,7 +456,7 @@ with pad_l:
                     max_width=160
                 )
             ).add_to(m)
-        map_data = st_folium(m, width="100%", height=440)
+        map_data = st_folium(m, width="900", height=440)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col_side:
